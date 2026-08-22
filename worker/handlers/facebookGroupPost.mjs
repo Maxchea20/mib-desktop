@@ -262,100 +262,134 @@ async function findComposer(page) {
 
     await element.click();
 
-    await page.waitForTimeout(
-      1500
-    );
-
     console.log(
       "Create post dialog opened."
     );
 
-    // -----------------------------------------
-    // Find visible Facebook textbox editors
-    // -----------------------------------------
+    // Facebook sometimes loads the comment editors
+    // first and the actual post editor afterwards.
+    // Wait up to 10 seconds for the real editor.
+    const POST_EDITOR_TIMEOUT = 10000;
+    const POLL_INTERVAL = 500;
 
-    const editors =
-      page.locator(
-        '[contenteditable="true"][role="textbox"]'
-      );
+    const startTime = Date.now();
 
-    const editorCount =
-      await editors.count();
-
-    console.log(
-      `Found ${editorCount} contenteditable textbox element(s).`
-    );
-
-    for (
-      let j = 0;
-      j < editorCount;
-      j++
+    while (
+      Date.now() - startTime <
+      POST_EDITOR_TIMEOUT
     ) {
-      const editor =
-        editors.nth(j);
+      // -----------------------------------------
+      // Exact Facebook post editor
+      // -----------------------------------------
 
-      if (
-        !(await editor
-          .isVisible()
-          .catch(() => false))
-      ) {
-        continue;
-      }
-
-      const ariaLabel =
-        await editor
-          .getAttribute(
-            "aria-label"
-          )
-          .catch(() => "");
-
-      const ariaPlaceholder =
-        await editor
-          .getAttribute(
-            "aria-placeholder"
-          )
-          .catch(() => "");
-
-      console.log(
-        `EDITOR ${j}:`,
-        JSON.stringify({
-          ariaLabel,
-          ariaPlaceholder,
-        })
-      );
-
-      const label =
-        `${ariaLabel} ${ariaPlaceholder}`
-          .toLowerCase();
-
-      // Never use comment/reply editors.
-      if (
-        label.includes("comment") ||
-        label.includes("answer as") ||
-        label.includes("reply")
-      ) {
-        console.log(
-          `EDITOR ${j}: skipped because it looks like a comment/reply editor.`
+      const postEditors =
+        page.locator(
+          '[aria-placeholder*="Create a public post"]'
         );
 
-        continue;
+      const postEditorCount =
+        await postEditors.count();
+
+      for (
+        let j = 0;
+        j < postEditorCount;
+        j++
+      ) {
+        const editor =
+          postEditors.nth(j);
+
+        if (
+          await editor
+            .isVisible()
+            .catch(() => false)
+        ) {
+          console.log(
+            "✅ Facebook post editor found."
+          );
+
+          return editor;
+        }
       }
 
-      console.log(
-        "✅ Facebook post editor found."
-      );
+      // -----------------------------------------
+      // Diagnostic information while waiting
+      // -----------------------------------------
 
-      return editor;
+      const editors =
+        page.locator(
+          '[contenteditable="true"][role="textbox"]'
+        );
+
+      const editorCount =
+        await editors.count();
+
+      let validEditorFound = false;
+
+      for (
+        let j = 0;
+        j < editorCount;
+        j++
+      ) {
+        const editor =
+          editors.nth(j);
+
+        if (
+          !(await editor
+            .isVisible()
+            .catch(() => false))
+        ) {
+          continue;
+        }
+
+        const ariaLabel =
+          await editor
+            .getAttribute(
+              "aria-label"
+            )
+            .catch(() => "");
+
+        const ariaPlaceholder =
+          await editor
+            .getAttribute(
+              "aria-placeholder"
+            )
+            .catch(() => "");
+
+        const label =
+          `${ariaLabel} ${ariaPlaceholder}`
+            .toLowerCase();
+
+        if (
+          label.includes("comment") ||
+          label.includes("answer as") ||
+          label.includes("reply")
+        ) {
+          continue;
+        }
+
+        console.log(
+          "✅ Facebook post editor found through textbox fallback."
+        );
+
+        validEditorFound = true;
+
+        return editor;
+      }
+
+      if (!validEditorFound) {
+        await page.waitForTimeout(
+          POLL_INTERVAL
+        );
+      }
     }
 
-    // -----------------------------------------
-    // Fallback: any visible contenteditable
-    // that isn't a comment/reply editor
-    // -----------------------------------------
-
     console.log(
-      "Trying visible contenteditable fallback..."
+      "Post editor did not appear within 10 seconds."
     );
+
+    // -----------------------------------------
+    // Final diagnostic
+    // -----------------------------------------
 
     const visibleEditors =
       page.locator(
@@ -391,23 +425,13 @@ async function findComposer(page) {
           )
           .catch(() => "");
 
-      const label =
-        `${ariaLabel} ${ariaPlaceholder}`
-          .toLowerCase();
-
-      if (
-        label.includes("comment") ||
-        label.includes("answer as") ||
-        label.includes("reply")
-      ) {
-        continue;
-      }
-
       console.log(
-        "✅ Facebook post editor found through fallback."
+        `EDITOR ${j}:`,
+        JSON.stringify({
+          ariaLabel,
+          ariaPlaceholder,
+        })
       );
-
-      return editor;
     }
 
     return null;
