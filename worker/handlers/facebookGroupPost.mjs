@@ -1,40 +1,52 @@
-import "dotenv/config";
-
-import { chromium } from "playwright";
-import path from "node:path";
+import fs from "node:fs/promises";
 import os from "node:os";
-import fs from "node:fs";
+import path from "node:path";
 
-const DEFAULT_PROFILE_DIR = path.join(
-  os.homedir(),
-  "MIB",
-  "facebook-profile"
-);
+import {
+  getFacebookBrowserPage,
+} from "../facebook/browser.mjs";
 
-const FACEBOOK_PROFILE_DIR =
-  process.env.FACEBOOK_PROFILE_DIR ||
-  DEFAULT_PROFILE_DIR;
+import {
+  waitForFacebookLogin,
+} from "../facebook/login.mjs";
 
-const NAVIGATION_TIMEOUT = Number(
-  process.env.FACEBOOK_NAVIGATION_TIMEOUT ||
-    30000
-);
+import {
+  openGroupComposer,
+  fillGroupComposer,
+} from "../facebook/groupComposer.mjs";
 
-const ACTION_TIMEOUT = Number(
-  process.env.FACEBOOK_ACTION_TIMEOUT ||
-    15000
-);
+import {
+  findPostButton,
+  clickPostButton,
+} from "../facebook/postButton.mjs";
 
-let browserContext = null;
-let browserPage = null;
+import {
+  verifyFacebookGroupPost,
+} from "../facebook/verification.mjs";
 
-function ensureProfileDirectory() {
-  if (!fs.existsSync(FACEBOOK_PROFILE_DIR)) {
-    fs.mkdirSync(FACEBOOK_PROFILE_DIR, {
-      recursive: true,
-    });
-  }
-}
+/*
+|--------------------------------------------------------------------------
+| CONFIGURATION
+|--------------------------------------------------------------------------
+*/
+
+const FACEBOOK_NAVIGATION_TIMEOUT =
+  30000;
+
+const PHOTO_BUTTON_TIMEOUT =
+  15000;
+
+const PHOTO_UPLOAD_TIMEOUT =
+  30000;
+
+const PHOTO_RENDER_WAIT_MS =
+  3000;
+
+/*
+|--------------------------------------------------------------------------
+| FACEBOOK URL NORMALIZATION
+|--------------------------------------------------------------------------
+*/
 
 function normalizeFacebookUrl(value) {
   if (!value) {
@@ -43,550 +55,567 @@ function normalizeFacebookUrl(value) {
 
   let url = String(value).trim();
 
-  // Handle Markdown-style URLs:
-  // [https://www.facebook.com/groups/123](https://www.facebook.com/groups/123)
-  const markdownMatch = url.match(
-    /^\[.*?\]\((https?:\/\/[^)]+)\)$/
-  );
+  /*
+  Handle normal URL:
+  https://www.facebook.com/groups/123
+  */
+
+  /*
+  Handle Markdown-style URL:
+  [https://www.facebook.com/groups/123](https://www.facebook.com/groups/123)
+  */
+
+  const markdownMatch =
+    url.match(
+      /\((https?:\/\/[^)]+)\)/
+    );
 
   if (markdownMatch) {
     url = markdownMatch[1];
   }
 
+  /*
+  Handle accidentally duplicated Markdown
+  or bracket formatting.
+  */
+
+  const directUrlMatch =
+    url.match(
+      /https?:\/\/(?:www\.)?facebook\.com\/groups\/[^\s\])]+/i
+    );
+
+  if (directUrlMatch) {
+    url =
+      directUrlMatch[0];
+  }
+
   return url;
 }
 
-async function getBrowserPage() {
-  ensureProfileDirectory();
+/*
+|--------------------------------------------------------------------------
+| IMAGE URL NORMALIZATION
+|--------------------------------------------------------------------------
+*/
+
+function normalizeImageUrls(
+  payload
+) {
+  const rawUrls =
+    Array.isArray(
+      payload?.image_urls
+    )
+      ? payload.image_urls
+      : Array.isArray(
+          payload?.imageUrls
+        )
+      ? payload.imageUrls
+      : [];
+
+  return rawUrls
+    .filter(
+      (url) =>
+        typeof url ===
+          "string" &&
+        url.trim() !== ""
+    )
+    .map(
+      (url) =>
+        url.trim()
+    );
+}
+
+/*
+|--------------------------------------------------------------------------
+| FILE EXTENSION
+|--------------------------------------------------------------------------
+*/
+
+function getExtensionFromContentType(
+  contentType
+) {
+  const type =
+    String(
+      contentType || ""
+    ).toLowerCase();
 
   if (
-    browserContext &&
-    browserPage &&
-    !browserPage.isClosed()
+    type.includes(
+      "image/jpeg"
+    ) ||
+    type.includes(
+      "image/jpg"
+    )
   ) {
-    return browserPage;
+    return ".jpg";
   }
 
-  console.log("");
-  console.log(
-    "================================="
-  );
-  console.log(
-    "STARTING FACEBOOK BROWSER"
-  );
-  console.log(
-    "================================="
-  );
-  console.log(
-    "Profile:",
-    FACEBOOK_PROFILE_DIR
-  );
-
-  browserContext =
-    await chromium.launchPersistentContext(
-      FACEBOOK_PROFILE_DIR,
-      {
-        headless: false,
-
-        viewport: {
-          width: 1440,
-          height: 900,
-        },
-
-        locale: "en-US",
-
-        args: [
-          "--disable-blink-features=AutomationControlled",
-        ],
-      }
-    );
-
-  browserContext.setDefaultTimeout(
-    ACTION_TIMEOUT
-  );
-
-  browserContext.setDefaultNavigationTimeout(
-    NAVIGATION_TIMEOUT
-  );
-
-  const pages =
-    browserContext.pages();
-
-  if (pages.length > 0) {
-    browserPage = pages[0];
-  } else {
-    browserPage =
-      await browserContext.newPage();
+  if (
+    type.includes(
+      "image/png"
+    )
+  ) {
+    return ".png";
   }
 
-  return browserPage;
+  if (
+    type.includes(
+      "image/webp"
+    )
+  ) {
+    return ".webp";
+  }
+
+  if (
+    type.includes(
+      "image/gif"
+    )
+  ) {
+    return ".gif";
+  }
+
+  if (
+    type.includes(
+      "image/bmp"
+    )
+  ) {
+    return ".bmp";
+  }
+
+  return ".jpg";
 }
 
-async function waitForFacebookLogin(page) {
-  const LOGIN_WAIT_MS = 120000;
-  const POLL_INTERVAL_MS = 2000;
+/*
+|--------------------------------------------------------------------------
+| DOWNLOAD IMAGE
+|--------------------------------------------------------------------------
+*/
 
-  console.log("");
-  console.log(
-    "Waiting for Facebook login/session..."
-  );
-  console.log(
-    "You have up to 2 minutes to complete login, identity confirmation, and browser trust."
-  );
-
-  const startTime = Date.now();
-
-  while (
-    Date.now() - startTime <
-    LOGIN_WAIT_MS
-  ) {
-    const currentUrl =
-      page.url();
-
-    if (
-      currentUrl.includes(
-        "facebook.com/login"
-      )
-    ) {
-      console.log(
-        "Facebook login page detected. Waiting for login..."
-      );
-
-      await page.waitForTimeout(
-        POLL_INTERVAL_MS
-      );
-
-      continue;
-    }
-
-    const loginButton =
-      page.getByRole(
-        "button",
-        {
-          name: /log in|login/i,
-        }
-      );
-
-    const loginVisible =
-      await loginButton
-        .first()
-        .isVisible()
-        .catch(
-          () => false
-        );
-
-    if (loginVisible) {
-      console.log(
-        "Facebook login prompt detected. Waiting..."
-      );
-
-      await page.waitForTimeout(
-        POLL_INTERVAL_MS
-      );
-
-      continue;
-    }
-
-    const bodyText =
-      await page
-        .locator("body")
-        .innerText()
-        .catch(
-          () => ""
-        );
-
-    const lower =
-      bodyText.toLowerCase();
-
-    const looksLoggedIn =
-      currentUrl.includes(
-        "facebook.com/groups/"
-      ) &&
-      !lower.includes(
-        "log in to facebook"
-      );
-
-    if (looksLoggedIn) {
-      console.log(
-        "✅ Facebook session appears active."
-      );
-
-      return;
-    }
-
-    await page.waitForTimeout(
-      POLL_INTERVAL_MS
-    );
-  }
-
-  throw new Error(
-    "Facebook login was not completed within 2 minutes."
-  );
-}
-
-async function findComposer(page) {
-  console.log(
-    'Looking for "Write something..." composer...'
-  );
-
-  const writeSomething =
-    page.getByText(
-      "Write something...",
-      {
-        exact: true,
-      }
-    );
-
-  const count =
-    await writeSomething.count();
-
-  for (
-    let i = 0;
-    i < count;
-    i++
-  ) {
-    const element =
-      writeSomething.nth(i);
-
-    if (
-      !(await element
-        .isVisible()
-        .catch(() => false))
-    ) {
-      continue;
-    }
-
-    console.log(
-      '"Write something..." found. Opening composer...'
-    );
-
-    await element.click();
-
-    console.log(
-      "Create post dialog opened."
-    );
-
-    // Facebook sometimes loads the comment editors
-    // first and the actual post editor afterwards.
-    // Wait up to 10 seconds for the real editor.
-    const POST_EDITOR_TIMEOUT = 10000;
-    const POLL_INTERVAL = 500;
-
-    const startTime = Date.now();
-
-    while (
-      Date.now() - startTime <
-      POST_EDITOR_TIMEOUT
-    ) {
-      // -----------------------------------------
-      // Exact Facebook post editor
-      // -----------------------------------------
-
-      const postEditors =
-        page.locator(
-          '[aria-placeholder*="Create a public post"]'
-        );
-
-      const postEditorCount =
-        await postEditors.count();
-
-      for (
-        let j = 0;
-        j < postEditorCount;
-        j++
-      ) {
-        const editor =
-          postEditors.nth(j);
-
-        if (
-          await editor
-            .isVisible()
-            .catch(() => false)
-        ) {
-          console.log(
-            "✅ Facebook post editor found."
-          );
-
-          return editor;
-        }
-      }
-
-      // -----------------------------------------
-      // Diagnostic information while waiting
-      // -----------------------------------------
-
-      const editors =
-        page.locator(
-          '[contenteditable="true"][role="textbox"]'
-        );
-
-      const editorCount =
-        await editors.count();
-
-      let validEditorFound = false;
-
-      for (
-        let j = 0;
-        j < editorCount;
-        j++
-      ) {
-        const editor =
-          editors.nth(j);
-
-        if (
-          !(await editor
-            .isVisible()
-            .catch(() => false))
-        ) {
-          continue;
-        }
-
-        const ariaLabel =
-          await editor
-            .getAttribute(
-              "aria-label"
-            )
-            .catch(() => "");
-
-        const ariaPlaceholder =
-          await editor
-            .getAttribute(
-              "aria-placeholder"
-            )
-            .catch(() => "");
-
-        const label =
-          `${ariaLabel} ${ariaPlaceholder}`
-            .toLowerCase();
-
-        if (
-          label.includes("comment") ||
-          label.includes("answer as") ||
-          label.includes("reply")
-        ) {
-          continue;
-        }
-
-        console.log(
-          "✅ Facebook post editor found through textbox fallback."
-        );
-
-        validEditorFound = true;
-
-        return editor;
-      }
-
-      if (!validEditorFound) {
-        await page.waitForTimeout(
-          POLL_INTERVAL
-        );
-      }
-    }
-
-    console.log(
-      "Post editor did not appear within 10 seconds."
-    );
-
-    // -----------------------------------------
-    // Final diagnostic
-    // -----------------------------------------
-
-    const visibleEditors =
-      page.locator(
-        '[contenteditable="true"]:visible'
-      );
-
-    const visibleCount =
-      await visibleEditors.count();
-
-    console.log(
-      `Visible contenteditable elements: ${visibleCount}`
-    );
-
-    for (
-      let j = 0;
-      j < visibleCount;
-      j++
-    ) {
-      const editor =
-        visibleEditors.nth(j);
-
-      const ariaLabel =
-        await editor
-          .getAttribute(
-            "aria-label"
-          )
-          .catch(() => "");
-
-      const ariaPlaceholder =
-        await editor
-          .getAttribute(
-            "aria-placeholder"
-          )
-          .catch(() => "");
-
-      console.log(
-        `EDITOR ${j}:`,
-        JSON.stringify({
-          ariaLabel,
-          ariaPlaceholder,
-        })
-      );
-    }
-
-    return null;
-  }
-
-  return null;
-}
-
-async function fillComposer(
-  composer,
-  message
+async function downloadImage(
+  imageUrl,
+  destinationPath
 ) {
   console.log(
-    "Clicking post textbox..."
-  );
-
-  await composer.click();
-
-  await composer.fill(
-    message
+    "Downloading Facebook photo:"
   );
 
   console.log(
-    "✅ Message entered into post composer."
-  );
-}
-
-async function findPostButton(page) {
-  console.log(
-    'Looking for Facebook Post button...'
+    imageUrl
   );
 
-  await page.waitForTimeout(1000);
-
-  // Facebook exposes the Create Post button
-  // as a div with aria-label="Post".
-  const postButtons =
-    page.locator(
-      '[aria-label="Post"]'
+  const response =
+    await fetch(
+      imageUrl
     );
 
-  const count =
-    await postButtons.count();
+  if (
+    !response.ok
+  ) {
+    throw new Error(
+      `Failed to download property photo. HTTP ${response.status}`
+    );
+  }
+
+  const contentType =
+    response.headers.get(
+      "content-type"
+    ) || "";
+
+  if (
+    !contentType
+      .toLowerCase()
+      .startsWith("image/")
+  ) {
+    throw new Error(
+      `Supabase photo URL did not return an image. Content-Type: ${contentType}`
+    );
+  }
+
+  const extension =
+    getExtensionFromContentType(
+      contentType
+    );
+
+  const finalPath =
+    destinationPath.endsWith(
+      extension
+    )
+      ? destinationPath
+      : `${destinationPath}${extension}`;
+
+  const arrayBuffer =
+    await response.arrayBuffer();
+
+  const buffer =
+    Buffer.from(
+      arrayBuffer
+    );
+
+  await fs.writeFile(
+    finalPath,
+    buffer
+  );
 
   console.log(
-    `Found ${count} aria-label="Post" element(s).`
+    `✅ Photo downloaded: ${path.basename(finalPath)}`
   );
+
+  return finalPath;
+}
+
+/*
+|--------------------------------------------------------------------------
+| DOWNLOAD ALL PROPERTY PHOTOS
+|--------------------------------------------------------------------------
+*/
+
+async function downloadPropertyPhotos(
+  imageUrls,
+  jobId
+) {
+  if (
+    imageUrls.length === 0
+  ) {
+    return {
+      directory: null,
+      files: [],
+    };
+  }
+
+  const safeJobId =
+    String(jobId)
+      .replace(
+        /[^a-zA-Z0-9_-]/g,
+        "_"
+      );
+
+  const directory =
+    path.join(
+      os.tmpdir(),
+      "mib-facebook-group",
+      safeJobId
+    );
+
+  await fs.mkdir(
+    directory,
+    {
+      recursive: true,
+    }
+  );
+
+  const files = [];
 
   for (
     let i = 0;
-    i < count;
+    i < imageUrls.length;
     i++
   ) {
-    const button =
-      postButtons.nth(i);
+    const imageUrl =
+      imageUrls[i];
 
-    if (
-      !(await button
-        .isVisible()
-        .catch(() => false))
-    ) {
-      continue;
-    }
+    const basePath =
+      path.join(
+        directory,
+        `property-${String(
+          i + 1
+        ).padStart(2, "0")}`
+      );
 
-    console.log(
-      "✅ Facebook Post button found."
+    const filePath =
+      await downloadImage(
+        imageUrl,
+        basePath
+      );
+
+    files.push(
+      filePath
     );
-
-    return button;
   }
 
-  return null;
+  return {
+    directory,
+    files,
+  };
 }
 
-async function waitForPostCompletion(
+/*
+|--------------------------------------------------------------------------
+| CLEANUP TEMPORARY PHOTOS
+|--------------------------------------------------------------------------
+*/
+
+async function cleanupTemporaryPhotos(
+  directory
+) {
+  if (!directory) {
+    return;
+  }
+
+  try {
+    await fs.rm(
+      directory,
+      {
+        recursive: true,
+        force: true,
+      }
+    );
+
+    console.log(
+      "Temporary Facebook photo files cleaned up."
+    );
+  } catch (error) {
+    console.error(
+      "Temporary photo cleanup error:",
+      error
+    );
+  }
+}
+
+/*
+|--------------------------------------------------------------------------
+| FIND PHOTO / VIDEO BUTTON
+|--------------------------------------------------------------------------
+*/
+
+async function findPhotoVideoButton(
   page
 ) {
-  /*
-   * Give Facebook time to close the modal
-   * and process the post.
-   */
-  await page.waitForTimeout(
-    5000
+  console.log(
+    "Looking for Facebook Photo/video button..."
   );
 
-  const bodyText =
-    await page
-      .locator("body")
-      .innerText()
-      .catch(
-        () => ""
+  const candidates = [
+    page.getByRole(
+      "button",
+      {
+        name: /^photo\/video$/i,
+      }
+    ),
+
+    page.locator(
+      '[aria-label="Photo/video"]'
+    ),
+
+    page.locator(
+      '[aria-label*="Photo/video" i]'
+    ),
+
+    page.locator(
+      '[role="button"][aria-label*="Photo/video" i]'
+    ),
+  ];
+
+  for (
+    const candidate of candidates
+  ) {
+    const count =
+      await candidate.count();
+
+    for (
+      let i = 0;
+      i < count;
+      i++
+    ) {
+      const button =
+        candidate.nth(i);
+
+      if (
+        await button
+          .isVisible()
+          .catch(
+            () => false
+          )
+      ) {
+        console.log(
+          "✅ Facebook Photo/video button found."
+        );
+
+        return button;
+      }
+    }
+  }
+
+  return null;
+}
+
+/*
+|--------------------------------------------------------------------------
+| UPLOAD PHOTOS TO FACEBOOK
+|--------------------------------------------------------------------------
+*/
+
+async function uploadPhotosToFacebook(
+  page,
+  imageFiles
+) {
+  if (
+    imageFiles.length === 0
+  ) {
+    return;
+  }
+
+  console.log("");
+  console.log(
+    "================================="
+  );
+  console.log(
+    "FACEBOOK PHOTO UPLOAD"
+  );
+  console.log(
+    "================================="
+  );
+
+  console.log(
+    "Photos to upload:",
+    imageFiles.length
+  );
+
+  const photoButton =
+    await findPhotoVideoButton(
+      page
+    );
+
+  if (!photoButton) {
+    throw new Error(
+      "Could not find Facebook Photo/video button."
+    );
+  }
+
+  console.log(
+    "Opening Facebook photo picker..."
+  );
+
+  /*
+  Wait for Facebook's native file chooser
+  while clicking Photo/video.
+  */
+
+  const fileChooserPromise =
+    page.waitForEvent(
+      "filechooser",
+      {
+        timeout:
+          PHOTO_BUTTON_TIMEOUT,
+      }
+    );
+
+  await photoButton.click();
+
+  let fileChooser;
+
+  try {
+    fileChooser =
+      await fileChooserPromise;
+  } catch (error) {
+    console.log(
+      "Native file chooser did not appear immediately."
+    );
+
+    /*
+    Some Facebook versions open an internal
+    upload UI rather than immediately exposing
+    a native chooser.
+
+    Give the page a moment to render it.
+    */
+
+    await page.waitForTimeout(
+      1500
+    );
+
+    const fileInputs =
+      page.locator(
+        'input[type="file"]'
       );
 
-  const lower =
-    bodyText.toLowerCase();
+    const inputCount =
+      await fileInputs.count();
 
-  if (
-    lower.includes(
-      "your post has been published"
-    )
-  ) {
-    return true;
-  }
+    if (
+      inputCount === 0
+    ) {
+      throw new Error(
+        "Facebook Photo/video was opened, but no file upload input was detected."
+      );
+    }
 
-  if (
-    lower.includes(
-      "post published"
-    )
-  ) {
-    return true;
-  }
+    let uploaded =
+      false;
 
-  if (
-    lower.includes(
-      "your post is published"
-    )
-  ) {
-    return true;
+    for (
+      let i = 0;
+      i < inputCount;
+      i++
+    ) {
+      const input =
+        fileInputs.nth(i);
+
+      try {
+        await input.setInputFiles(
+          imageFiles,
+          {
+            timeout:
+              PHOTO_UPLOAD_TIMEOUT,
+          }
+        );
+
+        uploaded =
+          true;
+
+        break;
+
+      } catch (
+        inputError
+      ) {
+        console.log(
+          `Facebook file input ${i} could not accept files.`
+        );
+      }
+    }
+
+    if (!uploaded) {
+      throw new Error(
+        "Facebook opened the photo interface, but the property photos could not be attached."
+      );
+    }
+
+    console.log(
+      "✅ Property photos attached through Facebook file input."
+    );
+
+    await page.waitForTimeout(
+      PHOTO_RENDER_WAIT_MS
+    );
+
+    return;
   }
 
   /*
-   * If the Create Post dialog disappeared,
-   * Facebook accepted the action even if it
-   * didn't show a textual confirmation.
-   */
-  const dialog =
-    page.getByRole(
-      "dialog"
-    );
+  Native file chooser path.
+  */
 
-  const dialogCount =
-    await dialog.count();
+  console.log(
+    "Attaching property photos..."
+  );
 
-  if (
-    dialogCount === 0
-  ) {
-    return true;
-  }
+  await fileChooser.setFiles(
+    imageFiles
+  );
 
-  const lastDialog =
-    dialog.last();
+  console.log(
+    `✅ ${imageFiles.length} property photo(s) attached to Facebook.`
+  );
 
-  const dialogStillVisible =
-    await lastDialog
-      .isVisible()
-      .catch(
-        () => false
-      );
-
-  if (!dialogStillVisible) {
-    return true;
-  }
-
-  return false;
+  await page.waitForTimeout(
+    PHOTO_RENDER_WAIT_MS
+  );
 }
+
+/*
+|--------------------------------------------------------------------------
+| MAIN FACEBOOK GROUP POST HANDLER
+|--------------------------------------------------------------------------
+*/
 
 export async function handleFacebookGroupPost(
   job
@@ -605,13 +634,20 @@ export async function handleFacebookGroupPost(
     payload.caption ||
     "";
 
+  const imageUrls =
+    normalizeImageUrls(
+      payload
+    );
+
   if (!groupUrl) {
     throw new Error(
       "Facebook Group post job is missing group_url."
     );
   }
 
-  if (!message.trim()) {
+  if (
+    !message.trim()
+  ) {
     throw new Error(
       "Facebook Group post job is missing message."
     );
@@ -637,164 +673,271 @@ export async function handleFacebookGroupPost(
   console.log(
     "================================="
   );
+
   console.log(
     "Job ID:",
     job.id
   );
+
   console.log(
     "Group:",
     groupUrl
   );
+
   console.log(
     "Message:",
     message
   );
+
+  console.log(
+    "Photos:",
+    imageUrls.length
+  );
+
   console.log(
     "================================="
   );
+
   console.log("");
 
-  const page =
-    await getBrowserPage();
+  let temporaryPhotoDirectory =
+    null;
 
-  console.log(
-    "Opening Facebook Group..."
-  );
+  try {
+    // -----------------------------------------
+    // 1. Start / reuse Facebook browser
+    // -----------------------------------------
 
-  await page.goto(
-    groupUrl,
-    {
-      waitUntil:
-        "domcontentloaded",
-      timeout:
-        NAVIGATION_TIMEOUT,
-    }
-  );
+    const page =
+      await getFacebookBrowserPage();
 
-  await page.waitForTimeout(
-    3000
-  );
+    // -----------------------------------------
+    // 2. Open Group
+    // -----------------------------------------
 
-  await waitForFacebookLogin(
-    page
-  );
+    console.log(
+      "Opening Facebook Group..."
+    );
 
-  console.log(
-    "Facebook session appears active."
-  );
+    await page.goto(
+      groupUrl,
+      {
+        waitUntil:
+          "domcontentloaded",
 
-  console.log(
-    "Looking for Group composer..."
-  );
+        timeout:
+          FACEBOOK_NAVIGATION_TIMEOUT,
+      }
+    );
 
-  const composer =
-    await findComposer(
+    await page.waitForTimeout(
+      3000
+    );
+
+    // -----------------------------------------
+    // 3. Verify Facebook session
+    // -----------------------------------------
+
+    await waitForFacebookLogin(
       page
     );
 
-  if (!composer) {
-    throw new Error(
-      "Could not find the Facebook Group post composer. The Group may require approval, membership, or Facebook may have changed the page layout."
-    );
-  }
-
-  console.log(
-    "Group composer found."
-  );
-
-  await fillComposer(
-    composer,
-    message
-  );
-
-  await page.waitForTimeout(
-    1000
-  );
-
-  console.log(
-    "Looking for Post button..."
-  );
-
-  const postButton =
-    await findPostButton(
-      page
+    console.log(
+      "Facebook session appears active."
     );
 
-  if (!postButton) {
-    throw new Error(
-      "Could not find the Facebook Post button after filling the Group composer."
+    // -----------------------------------------
+    // 4. Open Group composer
+    // -----------------------------------------
+
+    console.log(
+      "Looking for Group composer..."
     );
-  }
 
-  console.log(
-    "Post button found."
-  );
-
-  const disabled =
-    await postButton
-      .isDisabled()
-      .catch(
-        () => false
+    const composer =
+      await openGroupComposer(
+        page
       );
 
-  if (disabled) {
-    throw new Error(
-      "Facebook Post button is still disabled after entering the message."
-    );
-  }
+    if (!composer) {
+      throw new Error(
+        "Could not find the Facebook Group post composer. The Group may require approval, membership, or Facebook may have changed the page layout."
+      );
+    }
 
-  await postButton.click();
-
-  console.log(
-    "Post button clicked."
-  );
-
-  const completed =
-    await waitForPostCompletion(
-      page
-    );
-
-  if (!completed) {
     console.log(
-      "Facebook did not provide a definitive published confirmation."
+      "Group composer found."
+    );
+
+    // -----------------------------------------
+    // 5. Download property photos
+    // -----------------------------------------
+
+    let photoFiles = [];
+
+    if (
+      imageUrls.length > 0
+    ) {
+      console.log("");
+      console.log(
+        "Preparing property photos..."
+      );
+
+      const downloaded =
+        await downloadPropertyPhotos(
+          imageUrls,
+          job.id
+        );
+
+      temporaryPhotoDirectory =
+        downloaded.directory;
+
+      photoFiles =
+        downloaded.files;
+
+      console.log(
+        `✅ ${photoFiles.length} property photo(s) prepared.`
+      );
+    } else {
+      console.log(
+        "No property photos supplied. Continuing as text-only post."
+      );
+    }
+
+    // -----------------------------------------
+    // 6. Upload property photos
+    // -----------------------------------------
+
+    if (
+      photoFiles.length > 0
+    ) {
+      await uploadPhotosToFacebook(
+        page,
+        photoFiles
+      );
+    }
+
+    // -----------------------------------------
+    // 7. Enter message
+    // -----------------------------------------
+
+    console.log(
+      "Entering Facebook post message..."
+    );
+
+    /*
+    The editor returned by openGroupComposer()
+    is still the correct Create Post editor.
+    */
+
+    await fillGroupComposer(
+      composer,
+      message
+    );
+
+    await page.waitForTimeout(
+      1000
+    );
+
+    // -----------------------------------------
+    // 8. Find Post button
+    // -----------------------------------------
+
+    console.log(
+      "Looking for Facebook Post button..."
+    );
+
+    const postButton =
+      await findPostButton(
+        page
+      );
+
+    if (!postButton) {
+      throw new Error(
+        "Could not find the Facebook Post button after preparing the Group post."
+      );
+    }
+
+    console.log(
+      "Post button found."
+    );
+
+    // -----------------------------------------
+    // 9. Click Post
+    // -----------------------------------------
+
+    await clickPostButton(
+      postButton
+    );
+
+    console.log(
+      "Post button clicked."
+    );
+
+    // -----------------------------------------
+    // 10. Verify result
+    // -----------------------------------------
+
+    const verification =
+      await verifyFacebookGroupPost(
+        page,
+        message
+      );
+
+    if (
+      verification.status ===
+      "posted"
+    ) {
+      console.log(
+        "✅ Facebook Group post published."
+      );
+
+      return {
+        success: true,
+
+        status: "posted",
+
+        message:
+          "Facebook Group post published successfully.",
+
+        group_url:
+          groupUrl,
+
+        photoCount:
+          imageUrls.length,
+
+        verification,
+      };
+    }
+
+    console.log(
+      "Facebook post action completed, but verification was inconclusive."
     );
 
     return {
       success: true,
+
       status: "review",
+
       message:
-        "Post action completed, but Facebook did not provide a definitive confirmation.",
+        "Post action completed, but Facebook did not provide definitive confirmation.",
+
       group_url:
         groupUrl,
+
+      photoCount:
+        imageUrls.length,
+
+      verification,
     };
+
+  } finally {
+    // -----------------------------------------
+    // 11. Cleanup temporary files
+    // -----------------------------------------
+
+    await cleanupTemporaryPhotos(
+      temporaryPhotoDirectory
+    );
   }
-
-  console.log(
-    "✅ Facebook Group post published."
-  );
-
-  return {
-    success: true,
-    status: "posted",
-    message:
-      "Facebook Group post published successfully.",
-    group_url:
-      groupUrl,
-  };
-}
-
-export async function closeFacebookBrowser() {
-  if (browserContext) {
-    try {
-      await browserContext.close();
-    } catch (error) {
-      console.error(
-        "Facebook browser close error:",
-        error
-      );
-    }
-  }
-
-  browserContext = null;
-  browserPage = null;
 }
