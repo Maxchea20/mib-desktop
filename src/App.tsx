@@ -1,495 +1,409 @@
-﻿import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { supabase } from "./lib/supabase";
 
 const WORKER_NAME = "MIB Desktop";
 
-type Job = {
+type WorkerRecord = {
   id: string;
-  job_type: string;
-  payload: Record<string, unknown>;
+  user_id: string;
+  worker_name: string;
+  status: string;
+  last_seen: string | null;
 };
 
-type JobResult = {
-  success: boolean;
-  error?: string;
+type JobRecord = {
+  id: string;
+  worker_id: string;
+  job_type: string;
+  payload: Record<string, unknown>;
+  status: string;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
 };
 
 function App() {
-  const [status, setStatus] = useState("Connecting...");
-  const [workerId, setWorkerId] = useState("");
-  const [lastHeartbeat, setLastHeartbeat] = useState("");
-  const [currentJob, setCurrentJob] = useState<Job | null>(null);
+  const [worker, setWorker] =
+    useState<WorkerRecord | null>(null);
 
-  const [jobsReceived, setJobsReceived] = useState(0);
-  const [jobsCompleted, setJobsCompleted] = useState(0);
-  const [jobsFailed, setJobsFailed] = useState(0);
+  const [currentJob, setCurrentJob] =
+    useState<JobRecord | null>(null);
 
-  const [error, setError] = useState("");
+  const [jobsReceived, setJobsReceived] =
+    useState(0);
 
-  const currentJobRef = useRef<Job | null>(null);
-  const workerIdRef = useRef("");
-  const claimInFlightRef = useRef(false);
-  const executingJobRef = useRef(false);
+  const [jobsCompleted, setJobsCompleted] =
+    useState(0);
+
+  const [jobsFailed, setJobsFailed] =
+    useState(0);
+
+  const [connectionStatus, setConnectionStatus] =
+    useState("Connecting...");
+
+  const [error, setError] =
+    useState("");
+
+  const [workerProcessStatus, setWorkerProcessStatus] =
+    useState("Starting worker...");
+
+  async function getSession() {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (session) {
+      return session;
+    }
+
+    const {
+      data,
+      error: signInError,
+    } =
+      await supabase.auth.signInAnonymously();
+
+    if (signInError) {
+      throw signInError;
+    }
+
+    if (!data.session) {
+      throw new Error(
+        "Unable to authenticate MIB Desktop."
+      );
+    }
+
+    return data.session;
+  }
+
+  async function startNodeWorker() {
+    try {
+      setWorkerProcessStatus(
+        "Authenticating worker..."
+      );
+
+      const session =
+        await getSession();
+
+      if (
+        !session.access_token ||
+        !session.refresh_token
+      ) {
+        throw new Error(
+          "Supabase session does not contain the required worker tokens."
+        );
+      }
+
+      setWorkerProcessStatus(
+        "Starting background worker..."
+      );
+
+      const result =
+        await invoke<string>(
+          "start_worker",
+          {
+            accessToken:
+              session.access_token,
+
+            refreshToken:
+              session.refresh_token,
+          }
+        );
+
+      console.log(
+        "Worker startup:",
+        result
+      );
+
+      setWorkerProcessStatus(
+        "Background worker running"
+      );
+    } catch (err) {
+      console.error(
+        "Worker startup error:",
+        err
+      );
+
+      setWorkerProcessStatus(
+        "Worker startup failed"
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to start background worker."
+      );
+    }
+  }
+
+  async function loadWorker() {
+    try {
+      const session =
+        await getSession();
+
+      const user =
+        session.user;
+
+      const {
+        data,
+        error: workerError,
+      } =
+        await supabase
+          .from("desktop_workers")
+          .select(
+            "id,user_id,worker_name,status,last_seen"
+          )
+          .eq(
+            "user_id",
+            user.id
+          )
+          .eq(
+            "worker_name",
+            WORKER_NAME
+          )
+          .maybeSingle();
+
+      if (workerError) {
+        throw workerError;
+      }
+
+      if (!data) {
+        setWorker(null);
+        setConnectionStatus(
+          "Worker not registered"
+        );
+        return null;
+      }
+
+      setWorker(
+        data as WorkerRecord
+      );
+
+      setConnectionStatus(
+        "Connected"
+      );
+
+      return data as WorkerRecord;
+    } catch (err) {
+      console.error(
+        "Worker load error:",
+        err
+      );
+
+      setConnectionStatus(
+        "Connection failed"
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load worker."
+      );
+
+      return null;
+    }
+  }
+
+  async function loadStatistics(
+    workerId: string
+  ) {
+    try {
+      const [
+        receivedResult,
+        completedResult,
+        failedResult,
+        currentResult,
+      ] = await Promise.all([
+        supabase
+          .from("desktop_jobs")
+          .select("id", {
+            count: "exact",
+            head: true,
+          })
+          .eq(
+            "worker_id",
+            workerId
+          ),
+
+        supabase
+          .from("desktop_jobs")
+          .select("id", {
+            count: "exact",
+            head: true,
+          })
+          .eq(
+            "worker_id",
+            workerId
+          )
+          .eq(
+            "status",
+            "completed"
+          ),
+
+        supabase
+          .from("desktop_jobs")
+          .select("id", {
+            count: "exact",
+            head: true,
+          })
+          .eq(
+            "worker_id",
+            workerId
+          )
+          .eq(
+            "status",
+            "failed"
+          ),
+
+        supabase
+          .from("desktop_jobs")
+          .select(
+            "id,worker_id,job_type,payload,status,error,created_at,started_at,completed_at"
+          )
+          .eq(
+            "worker_id",
+            workerId
+          )
+          .eq(
+            "status",
+            "processing"
+          )
+          .order(
+            "created_at",
+            {
+              ascending: false,
+            }
+          )
+          .limit(1),
+      ]);
+
+      if (receivedResult.error) {
+        throw receivedResult.error;
+      }
+
+      if (completedResult.error) {
+        throw completedResult.error;
+      }
+
+      if (failedResult.error) {
+        throw failedResult.error;
+      }
+
+      if (currentResult.error) {
+        throw currentResult.error;
+      }
+
+      setJobsReceived(
+        receivedResult.count ?? 0
+      );
+
+      setJobsCompleted(
+        completedResult.count ?? 0
+      );
+
+      setJobsFailed(
+        failedResult.count ?? 0
+      );
+
+      setCurrentJob(
+        currentResult.data &&
+          currentResult.data.length > 0
+          ? (currentResult.data[0] as JobRecord)
+          : null
+      );
+    } catch (err) {
+      console.error(
+        "Statistics error:",
+        err
+      );
+    }
+  }
 
   useEffect(() => {
-    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-    let jobTimer: ReturnType<typeof setInterval> | null = null;
-    let statsTimer: ReturnType<typeof setInterval> | null = null;
+    let timer:
+      | ReturnType<typeof setInterval>
+      | null = null;
 
     let stopped = false;
 
-    async function loadWorkerStats(currentWorkerId: string) {
-      if (!currentWorkerId || stopped) {
-        return;
-      }
-
+    async function initialize() {
       try {
-        const [
-          receivedResult,
-          completedResult,
-          failedResult,
-        ] = await Promise.all([
-          supabase
-            .from("desktop_jobs")
-            .select("id", {
-              count: "exact",
-              head: true,
-            })
-            .eq("worker_id", currentWorkerId),
+        await startNodeWorker();
 
-          supabase
-            .from("desktop_jobs")
-            .select("id", {
-              count: "exact",
-              head: true,
-            })
-            .eq("worker_id", currentWorkerId)
-            .eq("status", "completed"),
-
-          supabase
-            .from("desktop_jobs")
-            .select("id", {
-              count: "exact",
-              head: true,
-            })
-            .eq("worker_id", currentWorkerId)
-            .eq("status", "failed"),
-        ]);
-
-        if (receivedResult.error) {
-          throw receivedResult.error;
+        if (stopped) {
+          return;
         }
 
-        if (completedResult.error) {
-          throw completedResult.error;
-        }
+        const currentWorker =
+          await loadWorker();
 
-        if (failedResult.error) {
-          throw failedResult.error;
-        }
-
-        setJobsReceived(receivedResult.count ?? 0);
-        setJobsCompleted(completedResult.count ?? 0);
-        setJobsFailed(failedResult.count ?? 0);
-      } catch (err) {
-        console.error("Worker statistics error:", err);
-      }
-    }
-
-    async function registerWorker(userId: string) {
-      const { data, error: upsertError } = await supabase
-        .from("desktop_workers")
-        .upsert(
-          {
-            user_id: userId,
-            worker_name: WORKER_NAME,
-            status: "online",
-            last_seen: new Date().toISOString(),
-          },
-          {
-            onConflict: "user_id",
-          }
-        )
-        .select("id")
-        .single();
-
-      if (upsertError) {
-        throw upsertError;
-      }
-
-      if (!data?.id) {
-        throw new Error(
-          "Desktop worker registration returned no worker ID."
-        );
-      }
-
-      return data.id as string;
-    }
-
-    async function startWorker() {
-      try {
-        setStatus("Signing in...");
-        setError("");
-
-        let {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (!session) {
-          const {
-            data,
-            error: signInError,
-          } = await supabase.auth.signInAnonymously();
-
-          if (signInError) {
-            throw signInError;
-          }
-
-          session = data.session;
-        }
-
-        if (!session?.user?.id) {
-          throw new Error(
-            "Desktop worker authentication failed."
-          );
-        }
-
-        const userId = session.user.id;
-
-        setStatus("Registering desktop...");
-
-        const currentWorkerId = await registerWorker(userId);
-
-        workerIdRef.current = currentWorkerId;
-        setWorkerId(currentWorkerId);
-
-        setStatus("Online");
-
-        setLastHeartbeat(
-          new Date().toLocaleTimeString()
-        );
-
-        await loadWorkerStats(currentWorkerId);
-
-        async function heartbeat() {
-          if (stopped) {
-            return;
-          }
-
-          const { error: heartbeatError } = await supabase
-            .from("desktop_workers")
-            .update({
-              status: "online",
-              last_seen: new Date().toISOString(),
-            })
-            .eq("id", currentWorkerId)
-            .eq("user_id", userId);
-
-          if (heartbeatError) {
-            console.error(
-              "Worker heartbeat error:",
-              heartbeatError
-            );
-
-            setStatus("Connection problem");
-            setError(heartbeatError.message);
-            return;
-          }
-
-          setStatus("Online");
-
-          setLastHeartbeat(
-            new Date().toLocaleTimeString()
-          );
-        }
-
-        async function markJobCompleted(jobId: string) {
-          const { error: updateError } = await supabase
-            .from("desktop_jobs")
-            .update({
-              status: "completed",
-              completed_at: new Date().toISOString(),
-              error: null,
-            })
-            .eq("id", jobId)
-            .eq("worker_id", currentWorkerId);
-
-          if (updateError) {
-            throw updateError;
-          }
-        }
-
-        async function markJobFailed(
-          jobId: string,
-          errorMessage: string
+        if (
+          stopped ||
+          !currentWorker
         ) {
-          const { error: updateError } = await supabase
-            .from("desktop_jobs")
-            .update({
-              status: "failed",
-              completed_at: new Date().toISOString(),
-              error: errorMessage,
-            })
-            .eq("id", jobId)
-            .eq("worker_id", currentWorkerId);
-
-          if (updateError) {
-            throw updateError;
-          }
+          return;
         }
 
-        async function executeJob(
-          job: Job
-        ): Promise<JobResult> {
-          console.log(
-            "MIB Desktop executing job:",
-            job
-          );
-
-          switch (job.job_type) {
-            case "background_test": {
-              console.log(
-                "Running background worker test..."
-              );
-
-              await new Promise((resolve) =>
-                setTimeout(resolve, 1000)
-              );
-
-              console.log(
-                "Background worker test completed."
-              );
-
-              return {
-                success: true,
-              };
-            }
-
-            case "test_job": {
-              console.log(
-                "Running MIB test job..."
-              );
-
-              await new Promise((resolve) =>
-                setTimeout(resolve, 1000)
-              );
-
-              console.log(
-                "MIB test job completed."
-              );
-
-              return {
-                success: true,
-              };
-            }
-
-            default: {
-              return {
-                success: false,
-                error:
-                  `Unsupported job type: ${job.job_type}`,
-              };
-            }
-          }
-        }
-
-        async function processCurrentJob(job: Job) {
-          if (executingJobRef.current) {
-            return;
-          }
-
-          executingJobRef.current = true;
-
-          try {
-            setError("");
-
-            const result = await executeJob(job);
-
-            if (result.success) {
-              await markJobCompleted(job.id);
-
-              console.log(
-                "MIB Desktop job completed:",
-                job.id
-              );
-            } else {
-              const failureMessage =
-                result.error ??
-                "Job execution failed.";
-
-              await markJobFailed(
-                job.id,
-                failureMessage
-              );
-
-              setError(failureMessage);
-
-              console.error(
-                "MIB Desktop job failed:",
-                failureMessage
-              );
-            }
-          } catch (err) {
-            const failureMessage =
-              err instanceof Error
-                ? err.message
-                : "Unknown job execution error.";
-
-            console.error(
-              "MIB Desktop job execution error:",
-              err
-            );
-
-            try {
-              await markJobFailed(
-                job.id,
-                failureMessage
-              );
-            } catch (markError) {
-              console.error(
-                "Unable to mark job as failed:",
-                markError
-              );
-            }
-
-            setError(failureMessage);
-          } finally {
-            currentJobRef.current = null;
-            setCurrentJob(null);
-            executingJobRef.current = false;
-
-            await loadWorkerStats(
-              currentWorkerId
-            );
-          }
-        }
-
-        async function checkForJob() {
-          if (stopped) {
-            return;
-          }
-
-          if (currentJobRef.current !== null) {
-            return;
-          }
-
-          if (claimInFlightRef.current) {
-            return;
-          }
-
-          if (executingJobRef.current) {
-            return;
-          }
-
-          claimInFlightRef.current = true;
-
-          try {
-            const {
-              data,
-              error: jobError,
-            } = await supabase.rpc(
-              "claim_next_desktop_job",
-              {
-                p_worker_id: currentWorkerId,
-              }
-            );
-
-            if (jobError) {
-              console.error(
-                "Job check error:",
-                jobError
-              );
-
-              setError(jobError.message);
-              return;
-            }
-
-            if (!data || data.length === 0) {
-              return;
-            }
-
-            const receivedJob =
-              data[0] as Job;
-
-            console.log(
-              "MIB Desktop received job:",
-              receivedJob
-            );
-
-            currentJobRef.current =
-              receivedJob;
-
-            setCurrentJob(receivedJob);
-
-            await processCurrentJob(
-              receivedJob
-            );
-          } finally {
-            claimInFlightRef.current = false;
-          }
-        }
-
-        heartbeatTimer = setInterval(
-          heartbeat,
-          30000
+        await loadStatistics(
+          currentWorker.id
         );
-
-        jobTimer = setInterval(
-          checkForJob,
-          5000
-        );
-
-        statsTimer = setInterval(
-          () =>
-            loadWorkerStats(
-              currentWorkerId
-            ),
-          10000
-        );
-
-        await checkForJob();
       } catch (err) {
         console.error(
-          "Desktop worker startup error:",
+          "Worker initialization error:",
           err
-        );
-
-        setStatus("Connection failed");
-
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Unknown worker error."
         );
       }
     }
 
-    startWorker();
+    initialize();
+
+    timer = setInterval(
+      async () => {
+        if (stopped) {
+          return;
+        }
+
+        const currentWorker =
+          await loadWorker();
+
+        if (
+          stopped ||
+          !currentWorker
+        ) {
+          return;
+        }
+
+        await loadStatistics(
+          currentWorker.id
+        );
+      },
+      3000
+    );
 
     return () => {
       stopped = true;
 
-      if (heartbeatTimer) {
-        clearInterval(heartbeatTimer);
-      }
-
-      if (jobTimer) {
-        clearInterval(jobTimer);
-      }
-
-      if (statsTimer) {
-        clearInterval(statsTimer);
+      if (timer) {
+        clearInterval(timer);
       }
     };
   }, []);
 
+  const isOnline =
+    worker?.status === "online";
+
+  const lastSeenTime =
+    worker?.last_seen
+      ? new Date(
+          worker.last_seen
+        ).toLocaleTimeString()
+      : "—";
+
   const statusColor =
-    status === "Online"
+    isOnline
       ? "#22c55e"
-      : status === "Connection failed" ||
-        status === "Connection problem"
-      ? "#ef4444"
-      : "#facc15";
+      : "#ef4444";
 
   return (
     <main
@@ -519,7 +433,7 @@ function App() {
         <h1
           style={{
             fontSize: "32px",
-            fontWeight: "700",
+            fontWeight: 700,
             marginBottom: "8px",
           }}
         >
@@ -558,7 +472,7 @@ function App() {
               alignItems: "center",
               gap: "10px",
               fontSize: "22px",
-              fontWeight: "600",
+              fontWeight: 600,
               color: statusColor,
             }}
           >
@@ -567,57 +481,86 @@ function App() {
                 width: "12px",
                 height: "12px",
                 borderRadius: "50%",
-                background: statusColor,
-                display: "inline-block",
+                background:
+                  statusColor,
+                display:
+                  "inline-block",
                 boxShadow:
-                  status === "Online"
+                  isOnline
                     ? "0 0 10px rgba(34,197,94,0.6)"
                     : "none",
               }}
             />
 
-            {status}
+            {isOnline
+              ? "Online"
+              : worker?.status ??
+                connectionStatus}
           </div>
 
-          {workerId && (
-            <div
+          <div
+            style={{
+              marginTop: "14px",
+              fontSize: "13px",
+              color: "#94a3b8",
+            }}
+          >
+            Worker process:{" "}
+            <span
               style={{
-                marginTop: "20px",
-                fontSize: "13px",
-                color: "#94a3b8",
+                color:
+                  workerProcessStatus.includes(
+                    "failed"
+                  )
+                    ? "#f87171"
+                    : "#e2e8f0",
               }}
             >
-              Worker ID
+              {workerProcessStatus}
+            </span>
+          </div>
+
+          {worker && (
+            <>
+              <div
+                style={{
+                  marginTop: "20px",
+                  fontSize: "13px",
+                  color: "#94a3b8",
+                }}
+              >
+                Worker ID
+
+                <div
+                  style={{
+                    color: "#e2e8f0",
+                    marginTop: "4px",
+                    wordBreak:
+                      "break-all",
+                  }}
+                >
+                  {worker.id}
+                </div>
+              </div>
 
               <div
                 style={{
-                  color: "#e2e8f0",
-                  marginTop: "4px",
-                  wordBreak: "break-all",
+                  marginTop: "14px",
+                  fontSize: "13px",
+                  color: "#94a3b8",
                 }}
               >
-                {workerId}
+                Last heartbeat:{" "}
+                <span
+                  style={{
+                    color:
+                      "#e2e8f0",
+                  }}
+                >
+                  {lastSeenTime}
+                </span>
               </div>
-            </div>
-          )}
-
-          {lastHeartbeat && (
-            <div
-              style={{
-                marginTop: "14px",
-                fontSize: "13px",
-                color: "#94a3b8",
-              }}
-            >
-              Last heartbeat:{" "}
-              <span
-                style={{
-                  color: "#e2e8f0",
-                }}
-              >
-                {lastHeartbeat}
-              </span>
-            </div>
+            </>
           )}
 
           <div
@@ -630,7 +573,8 @@ function App() {
             Jobs received:{" "}
             <span
               style={{
-                color: "#e2e8f0",
+                color:
+                  "#e2e8f0",
               }}
             >
               {jobsReceived}
@@ -647,7 +591,8 @@ function App() {
             Jobs completed:{" "}
             <span
               style={{
-                color: "#22c55e",
+                color:
+                  "#22c55e",
               }}
             >
               {jobsCompleted}
@@ -664,7 +609,8 @@ function App() {
             Jobs failed:{" "}
             <span
               style={{
-                color: "#f87171",
+                color:
+                  "#f87171",
               }}
             >
               {jobsFailed}
@@ -694,8 +640,8 @@ function App() {
             <>
               <div
                 style={{
-                  fontSize: "20px",
-                  fontWeight: "600",
+                  fontSize: "18px",
+                  fontWeight: 600,
                   color: "#60a5fa",
                 }}
               >
@@ -707,38 +653,12 @@ function App() {
                   marginTop: "10px",
                   fontSize: "13px",
                   color: "#94a3b8",
-                  wordBreak: "break-all",
+                  wordBreak:
+                    "break-all",
                 }}
               >
-                Job ID: {currentJob.id}
-              </div>
-
-              <pre
-                style={{
-                  marginTop: "14px",
-                  padding: "12px",
-                  background: "#1e293b",
-                  borderRadius: "8px",
-                  color: "#cbd5e1",
-                  fontSize: "12px",
-                  overflowX: "auto",
-                }}
-              >
-                {JSON.stringify(
-                  currentJob.payload,
-                  null,
-                  2
-                )}
-              </pre>
-
-              <div
-                style={{
-                  marginTop: "14px",
-                  color: "#facc15",
-                  fontSize: "13px",
-                }}
-              >
-                Executing automatically...
+                Job ID:{" "}
+                {currentJob.id}
               </div>
             </>
           ) : (
@@ -758,11 +678,14 @@ function App() {
             style={{
               marginTop: "20px",
               padding: "12px",
-              background: "#450a0a",
+              background:
+                "#450a0a",
               borderRadius: "8px",
-              color: "#fca5a5",
+              color:
+                "#fca5a5",
               fontSize: "14px",
-              wordBreak: "break-word",
+              wordBreak:
+                "break-word",
             }}
           >
             {error}

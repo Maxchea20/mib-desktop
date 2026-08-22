@@ -2,7 +2,13 @@ import "dotenv/config";
 
 import { createClient } from "@supabase/supabase-js";
 
-import { handleTestJob } from "./handlers/testJob.mjs";
+import {
+  handleTestJob,
+} from "./handlers/testJob.mjs";
+
+import {
+  handleFacebookGroupPost,
+} from "./handlers/facebookGroupPost.mjs";
 
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL;
@@ -10,7 +16,16 @@ const SUPABASE_URL =
 const SUPABASE_ANON_KEY =
   process.env.VITE_SUPABASE_ANON_KEY;
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+const ACCESS_TOKEN =
+  process.env.MIB_WORKER_ACCESS_TOKEN;
+
+const REFRESH_TOKEN =
+  process.env.MIB_WORKER_REFRESH_TOKEN;
+
+if (
+  !SUPABASE_URL ||
+  !SUPABASE_ANON_KEY
+) {
   console.error(
     "Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY."
   );
@@ -18,30 +33,50 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   process.exit(1);
 }
 
-const supabase = createClient(
-  SUPABASE_URL,
-  SUPABASE_ANON_KEY
-);
+if (
+  !ACCESS_TOKEN ||
+  !REFRESH_TOKEN
+) {
+  console.error(
+    "Missing MIB worker authentication tokens."
+  );
 
-const WORKER_NAME = "MIB Desktop";
+  console.error(
+    "The worker must be started by MIB Desktop."
+  );
+
+  process.exit(1);
+}
+
+const supabase =
+  createClient(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY
+  );
+
+const WORKER_NAME =
+  "MIB Desktop";
 
 let workerId = null;
 
 let currentJobId = null;
 
 async function authenticate() {
-  console.log("Authenticating worker...");
+  console.log(
+    "Authenticating worker using MIB Desktop session..."
+  );
 
   const {
-    data: { session },
-  } = await supabase.auth.getSession();
+    data,
+    error,
+  } =
+    await supabase.auth.setSession({
+      access_token:
+        ACCESS_TOKEN,
 
-  if (session) {
-    return session;
-  }
-
-  const { data, error } =
-    await supabase.auth.signInAnonymously();
+      refresh_token:
+        REFRESH_TOKEN,
+    });
 
   if (error) {
     throw error;
@@ -49,17 +84,24 @@ async function authenticate() {
 
   if (!data.session) {
     throw new Error(
-      "Worker authentication failed."
+      "Unable to establish worker session."
     );
   }
+
+  console.log(
+    "Worker authenticated as:",
+    data.session.user.id
+  );
 
   return data.session;
 }
 
 async function registerWorker() {
-  const session = await authenticate();
+  const session =
+    await authenticate();
 
-  const userId = session.user.id;
+  const userId =
+    session.user.id;
 
   console.log(
     "Worker user:",
@@ -67,59 +109,52 @@ async function registerWorker() {
   );
 
   const {
-    data: existingWorker,
-    error: findError,
-  } = await supabase
-    .from("desktop_workers")
-    .select("id")
-    .eq("user_id", userId)
-    .maybeSingle();
+    data,
+    error,
+  } =
+    await supabase
+      .from(
+        "desktop_workers"
+      )
+      .upsert(
+        {
+          user_id:
+            userId,
 
-  if (findError) {
-    throw findError;
-  }
+          worker_name:
+            WORKER_NAME,
 
-  if (existingWorker) {
-    workerId = existingWorker.id;
+          status:
+            "online",
 
-    const { error } =
-      await supabase
-        .from("desktop_workers")
-        .update({
-          worker_name: WORKER_NAME,
-          status: "online",
           last_seen:
             new Date().toISOString(),
-        })
-        .eq("id", workerId);
+        },
+        {
+          onConflict:
+            "user_id",
+        }
+      )
+      .select("id")
+      .single();
 
-    if (error) {
-      throw error;
-    }
-
-    return;
+  if (error) {
+    throw error;
   }
 
-  const {
-    data: newWorker,
-    error: insertError,
-  } = await supabase
-    .from("desktop_workers")
-    .insert({
-      user_id: userId,
-      worker_name: WORKER_NAME,
-      status: "online",
-      last_seen:
-        new Date().toISOString(),
-    })
-    .select("id")
-    .single();
-
-  if (insertError) {
-    throw insertError;
+  if (!data?.id) {
+    throw new Error(
+      "Worker registration returned no worker ID."
+    );
   }
 
-  workerId = newWorker.id;
+  workerId =
+    data.id;
+
+  console.log(
+    "Registered worker:",
+    workerId
+  );
 }
 
 async function heartbeat() {
@@ -127,15 +162,24 @@ async function heartbeat() {
     return;
   }
 
-  const { error } =
+  const {
+    error,
+  } =
     await supabase
-      .from("desktop_workers")
+      .from(
+        "desktop_workers"
+      )
       .update({
-        status: "online",
+        status:
+          "online",
+
         last_seen:
           new Date().toISOString(),
       })
-      .eq("id", workerId);
+      .eq(
+        "id",
+        workerId
+      );
 
   if (error) {
     console.error(
@@ -155,17 +199,31 @@ async function completeJob(
   jobId,
   result
 ) {
-  const { error } =
+  const {
+    error,
+  } =
     await supabase
-      .from("desktop_jobs")
+      .from(
+        "desktop_jobs"
+      )
       .update({
-        status: "completed",
+        status:
+          "completed",
+
         completed_at:
           new Date().toISOString(),
-        error: null,
+
+        error:
+          null,
       })
-      .eq("id", jobId)
-      .eq("worker_id", workerId);
+      .eq(
+        "id",
+        jobId
+      )
+      .eq(
+        "worker_id",
+        workerId
+      );
 
   if (error) {
     throw error;
@@ -190,17 +248,31 @@ async function failJob(
   jobId,
   errorMessage
 ) {
-  const { error } =
+  const {
+    error,
+  } =
     await supabase
-      .from("desktop_jobs")
+      .from(
+        "desktop_jobs"
+      )
       .update({
-        status: "failed",
+        status:
+          "failed",
+
         completed_at:
           new Date().toISOString(),
-        error: errorMessage,
+
+        error:
+          errorMessage,
       })
-      .eq("id", jobId)
-      .eq("worker_id", workerId);
+      .eq(
+        "id",
+        jobId
+      )
+      .eq(
+        "worker_id",
+        workerId
+      );
 
   if (error) {
     console.error(
@@ -222,11 +294,20 @@ async function failJob(
   );
 }
 
-async function executeJob(job) {
-  switch (job.job_type) {
+async function executeJob(
+  job
+) {
+  switch (
+    job.job_type
+  ) {
     case "test_job":
     case "background_test":
       return await handleTestJob(
+        job
+      );
+
+    case "facebook_group_post":
+      return await handleFacebookGroupPost(
         job
       );
 
@@ -249,12 +330,14 @@ async function checkForJobs() {
   const {
     data,
     error,
-  } = await supabase.rpc(
-    "claim_next_desktop_job",
-    {
-      p_worker_id: workerId,
-    }
-  );
+  } =
+    await supabase.rpc(
+      "claim_next_desktop_job",
+      {
+        p_worker_id:
+          workerId,
+      }
+    );
 
   if (error) {
     console.error(
@@ -265,19 +348,26 @@ async function checkForJobs() {
     return;
   }
 
-  if (!data || data.length === 0) {
+  if (
+    !data ||
+    data.length === 0
+  ) {
     return;
   }
 
-  const job = data[0];
+  const job =
+    data[0];
 
-  currentJobId = job.id;
+  currentJobId =
+    job.id;
 
   console.log("");
   console.log(
     "================================="
   );
-  console.log("NEW MIB JOB");
+  console.log(
+    "NEW MIB JOB"
+  );
   console.log(
     "================================="
   );
@@ -290,13 +380,23 @@ async function checkForJobs() {
     job.job_type
   );
   console.log(
+    "Payload:",
+    JSON.stringify(
+      job.payload,
+      null,
+      2
+    )
+  );
+  console.log(
     "================================="
   );
   console.log("");
 
   try {
     const result =
-      await executeJob(job);
+      await executeJob(
+        job
+      );
 
     await completeJob(
       job.id,
@@ -313,7 +413,8 @@ async function checkForJobs() {
       message
     );
   } finally {
-    currentJobId = null;
+    currentJobId =
+      null;
   }
 }
 
@@ -359,7 +460,6 @@ async function startWorker() {
     );
 
     await checkForJobs();
-
   } catch (error) {
     console.error("");
 
@@ -367,7 +467,9 @@ async function startWorker() {
       "🔴 Worker startup failed:"
     );
 
-    console.error(error);
+    console.error(
+      error
+    );
 
     console.error("");
 
