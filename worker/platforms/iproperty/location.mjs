@@ -712,160 +712,36 @@ async function selectPropertyUnitType(
 |--------------------------------------------------------------------------
 */
 
-async function selectState(
-  page
-) {
-  console.log("");
-
-  console.log(
-    "Selecting State: Perak"
-  );
-
-  const selectControl =
-    await findSelectAnOptionForField(
-      page,
-      "State"
+async function selectState(page, state = "Perak") {
+    const stateInput = page.locator(
+        '[da-id="state-input-dropdown"] input[role="combobox"]'
     );
 
-  await selectControl.scrollIntoViewIfNeeded();
+    await stateInput.waitFor({ state: "visible" });
 
-  console.log(
-    "🖱️ Clicking State -> Select an option"
-  );
+    // Clear whatever is currently inside
+    await stateInput.click();
+    await stateInput.press("Control+A");
+    await stateInput.fill("");
 
-  await selectControl.click();
+    // Type the state
+    await stateInput.fill(state);
 
-  await page.waitForTimeout(700);
+    // Wait for the typeahead suggestions
+    await page.waitForTimeout(500);
 
-  console.log(
-    "Looking for Perak..."
-  );
+    // Click the matching suggestion
+    const suggestion = page.getByRole("option", { name: state }).first();
 
-  let perak =
-    await findVisible(
-      [
-        page.getByRole(
-          "option",
-          {
-            name: "Perak",
-            exact: true,
-          }
-        ),
+    if (await suggestion.isVisible().catch(() => false)) {
+        await suggestion.click();
+    } else {
+        // Fallback: keyboard selection
+        await stateInput.press("ArrowDown");
+        await stateInput.press("Enter");
+    }
 
-        page.getByText(
-          "Perak",
-          {
-            exact: true,
-          }
-        ),
-      ],
-      5000
-    );
-
-  if (perak) {
-    console.log(
-      "✅ Perak found. Clicking Perak..."
-    );
-
-    await perak.scrollIntoViewIfNeeded();
-
-    await perak.click();
-
-    await page.waitForTimeout(
-      PAGE_WAIT_MS
-    );
-
-    console.log(
-      "✅ State selected: Perak"
-    );
-
-    return;
-  }
-
-  console.log(
-    "Perak not visible. Trying searchable State input..."
-  );
-
-  const stateInput =
-    await findVisible(
-      [
-        page.locator(
-          'input[placeholder*="state" i]'
-        ),
-
-        page.locator(
-          'input[aria-label*="state" i]'
-        ),
-
-        page.locator(
-          '.hui-select__menu.show input'
-        ),
-
-        page.locator(
-          '[role="listbox"] input'
-        ),
-      ],
-      5000
-    );
-
-  if (!stateInput) {
-    throw new Error(
-      "State dropdown opened, but Perak was not found and no State search input was available."
-    );
-  }
-
-  await stateInput.click();
-
-  await stateInput.fill(
-    "Perak"
-  );
-
-  console.log(
-    "Typed Perak. Looking for Perak option..."
-  );
-
-  await page.waitForTimeout(
-    1000
-  );
-
-  perak =
-    await findVisible(
-      [
-        page.getByRole(
-          "option",
-          {
-            name: "Perak",
-            exact: true,
-          }
-        ),
-
-        page.getByText(
-          "Perak",
-          {
-            exact: true,
-          }
-        ),
-      ],
-      10000
-    );
-
-  if (!perak) {
-    throw new Error(
-      'Could not find "Perak" after typing.'
-    );
-  }
-
-  await perak.scrollIntoViewIfNeeded();
-
-  await perak.click();
-
-  await page.waitForTimeout(
-    PAGE_WAIT_MS
-  );
-
-  console.log(
-    "✅ State selected: Perak"
-  );
+    await page.waitForTimeout(300);
 }
 
 

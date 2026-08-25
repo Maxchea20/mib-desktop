@@ -1,6 +1,6 @@
 import {
-  getFacebookBrowserPage,
-} from "../facebook/browser.mjs";
+  getIpropertyBrowserPage,
+} from "./browser.mjs";
 
 import {
   handleListingType,
@@ -9,6 +9,22 @@ import {
 import {
   handleLocation,
 } from "./location.mjs";
+
+import {
+  handleUnitDetails,
+} from "./unitDetails.mjs";
+
+import {
+  handlePrice,
+} from "./price.mjs";
+
+import {
+  handleDescription,
+} from "./description.mjs";
+
+import {
+  handleGallery,
+} from "./gallery.mjs";
 
 /*
 |--------------------------------------------------------------------------
@@ -307,12 +323,12 @@ export async function handleIpropertyCreateListing(
 
   /*
   |--------------------------------------------------------------------------
-  | 1. Reuse MIB Desktop browser
+  | 1. MIB Desktop browser Iproperty
   |--------------------------------------------------------------------------
   */
 
   const page =
-    await getFacebookBrowserPage();
+  await getIpropertyBrowserPage();
 
   /*
   |--------------------------------------------------------------------------
@@ -386,6 +402,23 @@ export async function handleIpropertyCreateListing(
 await handleLocation(
   page,
   job
+);
+
+await handleUnitDetails(
+  page,
+  job
+);
+
+await handlePrice(
+  page
+);
+
+await handleDescription(
+  page
+);
+
+await handleGallery(
+  page
 );
 
   /*
