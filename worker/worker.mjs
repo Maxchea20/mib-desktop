@@ -8,7 +8,11 @@ import {
 
 import {
   handleFacebookGroupPost,
-} from "./handlers/facebookGroupPost.mjs";
+} from "./platforms/facebook/groupPost.mjs";
+
+import {
+  handleIpropertyCreateListing,
+} from "./platforms/iproperty/createListing.mjs";
 
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL;
@@ -311,6 +315,11 @@ async function executeJob(
         job
       );
 
+    case "iproperty_create_listing":
+      return await handleIpropertyCreateListing(
+        job
+      );
+
     default:
       throw new Error(
         `No handler registered for job type: ${job.job_type}`
@@ -362,23 +371,29 @@ async function checkForJobs() {
     job.id;
 
   console.log("");
+
   console.log(
     "================================="
   );
+
   console.log(
     "NEW MIB JOB"
   );
+
   console.log(
     "================================="
   );
+
   console.log(
     "Job ID:",
     job.id
   );
+
   console.log(
     "Job Type:",
     job.job_type
   );
+
   console.log(
     "Payload:",
     JSON.stringify(
@@ -387,9 +402,11 @@ async function checkForJobs() {
       2
     )
   );
+
   console.log(
     "================================="
   );
+
   console.log("");
 
   try {
@@ -421,15 +438,19 @@ async function checkForJobs() {
 async function startWorker() {
   try {
     console.log("");
+
     console.log(
       "================================="
     );
+
     console.log(
       "MIB DESKTOP WORKER"
     );
+
     console.log(
       "================================="
     );
+
     console.log("");
 
     await registerWorker();

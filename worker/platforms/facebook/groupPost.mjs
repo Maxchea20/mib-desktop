@@ -4,26 +4,25 @@ import path from "node:path";
 
 import {
   getFacebookBrowserPage,
-} from "../facebook/browser.mjs";
+} from "./browser.mjs";
 
 import {
   waitForFacebookLogin,
-} from "../facebook/login.mjs";
+} from "./login.mjs";
 
 import {
   openGroupComposer,
   fillGroupComposer,
-} from "../facebook/groupComposer.mjs";
+} from "./groupComposer.mjs";
 
 import {
   findPostButton,
   clickPostButton,
-} from "../facebook/postButton.mjs";
+} from "./postButton.mjs";
 
 import {
   verifyFacebookGroupPost,
-} from "../facebook/verification.mjs";
-
+} from "./verification.mjs";
 /*
 |--------------------------------------------------------------------------
 | CONFIGURATION
