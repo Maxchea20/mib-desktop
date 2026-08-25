@@ -67,6 +67,18 @@ export async function verifyFacebookGroupPost(
       ) ||
       lower.includes(
         "post failed"
+      ) ||
+      lower.includes(
+        "oops"
+      ) ||
+      lower.includes(
+        "photo isn't available"
+      ) ||
+      lower.includes(
+        "photo is not available"
+      ) ||
+      lower.includes(
+        "image isn't available"
       )
     ) {
       console.log(
