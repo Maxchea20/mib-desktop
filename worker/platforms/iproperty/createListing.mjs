@@ -2,6 +2,14 @@ import {
   getFacebookBrowserPage,
 } from "../facebook/browser.mjs";
 
+import {
+  handleListingType,
+} from "./listingType.mjs";
+
+import {
+  handleLocation,
+} from "./location.mjs";
+
 /*
 |--------------------------------------------------------------------------
 | iPROPERTY PRO
@@ -262,110 +270,6 @@ async function openCreateListing(
   );
 }
 
-/*
-|--------------------------------------------------------------------------
-| VERIFY LISTING TYPE SCREEN
-|--------------------------------------------------------------------------
-*/
-
-async function verifyListingTypeScreen(
-  page
-) {
-  console.log(
-    "Checking iProperty Create new listing screen..."
-  );
-
-  const createNewListing =
-    await findVisible([
-      page.getByText(
-        "Create new listing",
-        {
-          exact: true,
-        }
-      ),
-    ]);
-
-  if (
-    !createNewListing
-  ) {
-    throw new Error(
-      "iProperty Create new listing screen was not detected."
-    );
-  }
-
-  const residential =
-    await findVisible([
-      page.getByText(
-        "Residential",
-        {
-          exact: true,
-        }
-      ),
-    ]);
-
-  const commercial =
-    await findVisible([
-      page.getByText(
-        "Commercial",
-        {
-          exact: true,
-        }
-      ),
-    ]);
-
-  const sale =
-    await findVisible([
-      page.getByText(
-        "Sale",
-        {
-          exact: true,
-        }
-      ),
-    ]);
-
-  const rent =
-    await findVisible([
-      page.getByText(
-        "Rent",
-        {
-          exact: true,
-        }
-      ),
-    ]);
-
-  if (
-    !residential ||
-    !commercial ||
-    !sale ||
-    !rent
-  ) {
-    throw new Error(
-      "iProperty Listing Type screen was detected, but the expected Residential/Commercial/Sale/Rent options were not found."
-    );
-  }
-
-  console.log(
-    "✅ iProperty Listing Type screen confirmed."
-  );
-
-  console.log(
-    "Residential option found."
-  );
-
-  console.log(
-    "Commercial option found."
-  );
-
-  console.log(
-    "Sale option found."
-  );
-
-  console.log(
-    "Rent option found."
-  );
-
-  return true;
-}
 
 /*
 |--------------------------------------------------------------------------
@@ -471,13 +375,18 @@ export async function handleIpropertyCreateListing(
 
   /*
   |--------------------------------------------------------------------------
-  | 6. Verify first screen
+  | 6. Handle Listing Type
   |--------------------------------------------------------------------------
   */
 
-  await verifyListingTypeScreen(
-    page
-  );
+  await handleListingType(
+  page
+);
+
+await handleLocation(
+  page,
+  job
+);
 
   /*
   |--------------------------------------------------------------------------
