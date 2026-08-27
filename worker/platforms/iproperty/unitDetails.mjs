@@ -10,9 +10,10 @@
 | 3. Built-up
 | 4. Land area
 | 5. Parking spots
-| 6. Click Next
+| 6. Furnishing
+| 7. Click Next
 |
-| HARD CODED TEST VERSION
+| DATA DRIVEN VERSION
 |
 |--------------------------------------------------------------------------
 */
@@ -140,9 +141,9 @@ async function fillNumberField(
 
   await input.scrollIntoViewIfNeeded();
 
-await input.fill(
-  String(value)
-);
+  await input.fill(
+    String(value)
+  );
 
   await page.waitForTimeout(
     500
@@ -177,7 +178,6 @@ await input.fill(
   );
 }
 
-  
 /*
 |--------------------------------------------------------------------------
 | BEDROOMS
@@ -185,21 +185,34 @@ await input.fill(
 */
 
 async function enterBedrooms(
-  page
+  page,
+  bedrooms
 ) {
+  if (
+    bedrooms === null ||
+    bedrooms === undefined ||
+    bedrooms === ""
+  ) {
+    console.log(
+      "Bedrooms: no value provided. Skipping."
+    );
+
+    return;
+  }
+
   await fillNumberField(
     page,
     "Bedrooms",
     [
       page.locator(
-        '#bedrooms'
+        "#bedrooms"
       ),
 
       page.locator(
         '[da-id="bedrooms-input-stepper"] input'
       ),
     ],
-    4
+    bedrooms
   );
 }
 
@@ -210,21 +223,34 @@ async function enterBedrooms(
 */
 
 async function enterBathrooms(
-  page
+  page,
+  bathrooms
 ) {
+  if (
+    bathrooms === null ||
+    bathrooms === undefined ||
+    bathrooms === ""
+  ) {
+    console.log(
+      "Bathrooms: no value provided. Skipping."
+    );
+
+    return;
+  }
+
   await fillNumberField(
     page,
     "Bathrooms",
     [
       page.locator(
-        '#bathrooms'
+        "#bathrooms"
       ),
 
       page.locator(
         '[da-id="bathrooms-input-stepper"] input'
       ),
     ],
-    3
+    bathrooms
   );
 }
 
@@ -235,21 +261,34 @@ async function enterBathrooms(
 */
 
 async function enterBuiltUp(
-  page
+  page,
+  builtUp
 ) {
+  if (
+    builtUp === null ||
+    builtUp === undefined ||
+    builtUp === ""
+  ) {
+    console.log(
+      "Built-up: no value provided. Skipping."
+    );
+
+    return;
+  }
+
   await fillNumberField(
     page,
     "Built-up",
     [
       page.locator(
-        '#floorSize'
+        "#floorSize"
       ),
 
       page.locator(
         '[da-id="built-up-input"] input'
       ),
     ],
-    2000
+    builtUp
   );
 }
 
@@ -260,21 +299,34 @@ async function enterBuiltUp(
 */
 
 async function enterLandArea(
-  page
+  page,
+  landArea
 ) {
+  if (
+    landArea === null ||
+    landArea === undefined ||
+    landArea === ""
+  ) {
+    console.log(
+      "Land area: no value provided. Skipping."
+    );
+
+    return;
+  }
+
   await fillNumberField(
     page,
     "Land area",
     [
       page.locator(
-        '#landArea'
+        "#landArea"
       ),
 
       page.locator(
         '[da-id="land-area-input"] input'
       ),
     ],
-    1400
+    landArea
   );
 }
 
@@ -285,21 +337,34 @@ async function enterLandArea(
 */
 
 async function enterParking(
-  page
+  page,
+  parking
 ) {
+  if (
+    parking === null ||
+    parking === undefined ||
+    parking === ""
+  ) {
+    console.log(
+      "Parking: no value provided. Skipping."
+    );
+
+    return;
+  }
+
   await fillNumberField(
     page,
     "Parking spots",
     [
       page.locator(
-        '#parking'
+        "#parking"
       ),
 
       page.locator(
         '[da-id="parking-input-stepper"] input'
       ),
     ],
-    2
+    parking
   );
 }
 
@@ -310,50 +375,101 @@ async function enterParking(
 */
 
 async function selectFurnishing(
-  page
+  page,
+  furnishing
 ) {
   console.log("");
 
   console.log(
-    "Selecting Furnishing: Fully Furnished"
+    `Selecting Furnishing: ${furnishing}`
   );
 
-  const fullyFurnished = await findVisible(
-    [
-      page.getByRole(
-        "button",
-        {
-          name: "Fully Furnished",
-          exact: true,
-        }
-      ),
+  if (
+    furnishing === null ||
+    furnishing === undefined ||
+    furnishing === ""
+  ) {
+    console.log(
+      "Furnishing: no value provided. Skipping."
+    );
 
-      page.getByText(
-        "Fully Furnished",
-        {
-          exact: true,
-        }
-      ),
-    ],
-    10000
-  );
+    return;
+  }
 
-  if (!fullyFurnished) {
+  /*
+  |--------------------------------------------------------------------------
+  | NORMALIZE VALUE
+  |--------------------------------------------------------------------------
+  |
+  | Supabase may contain:
+  |
+  | unfurnished
+  | partially furnished
+  | fully furnished
+  |
+  | iProperty may display:
+  |
+  | Unfurnished
+  | Partially Furnished
+  | Fully Furnished
+  |
+  | Match case-insensitively while keeping the
+  | database as the source of truth.
+  |
+  |--------------------------------------------------------------------------
+  */
+
+  const normalizedFurnishing =
+    String(furnishing)
+      .trim()
+      .toLowerCase();
+
+  const furnishingOption =
+    await findVisible(
+      [
+        page.getByRole(
+          "button",
+          {
+            name:
+              new RegExp(
+                `^${normalizedFurnishing.replace(
+                  /[.*+?^${}()|[\]\\]/g,
+                  "\\$&"
+                )}$`,
+                "i"
+              ),
+          }
+        ),
+
+        page.getByText(
+          new RegExp(
+            `^${normalizedFurnishing.replace(
+              /[.*+?^${}()|[\]\\]/g,
+              "\\$&"
+            )}$`,
+            "i"
+          )
+        ),
+      ],
+      10000
+    );
+
+  if (!furnishingOption) {
     throw new Error(
-      'Could not find "Fully Furnished" option.'
+      `Could not find "${furnishing}" furnishing option on iProperty.`
     );
   }
 
-  await fullyFurnished.scrollIntoViewIfNeeded();
+  await furnishingOption.scrollIntoViewIfNeeded();
 
-  await fullyFurnished.click();
+  await furnishingOption.click();
 
   await page.waitForTimeout(
     500
   );
 
   console.log(
-    "✅ Furnishing selected: Fully Furnished"
+    `✅ Furnishing selected: ${furnishing}`
   );
 }
 
@@ -438,6 +554,53 @@ export async function handleUnitDetails(
 
   /*
   |--------------------------------------------------------------------------
+  | VALIDATE LISTING DATA
+  |--------------------------------------------------------------------------
+  */
+
+  if (!listing) {
+    throw new Error(
+      "Listing data was not provided to iProperty Unit Details."
+    );
+  }
+
+  console.log(
+    "MIB Listing ID:",
+    listing.id
+  );
+
+  console.log(
+    "Bedrooms:",
+    listing.bedrooms
+  );
+
+  console.log(
+    "Bathrooms:",
+    listing.bathrooms
+  );
+
+  console.log(
+    "Built-up:",
+    listing.built_up
+  );
+
+  console.log(
+    "Land area:",
+    listing.land_size
+  );
+
+  console.log(
+    "Parking:",
+    listing.parking_spaces
+  );
+
+  console.log(
+    "Furnishing:",
+    listing.furnishing
+  );
+
+  /*
+  |--------------------------------------------------------------------------
   | WAIT
   |--------------------------------------------------------------------------
   */
@@ -448,33 +611,39 @@ export async function handleUnitDetails(
 
   /*
   |--------------------------------------------------------------------------
-  | HARD CODED TEST DATA
+  | DATA DRIVEN FIELDS
   |--------------------------------------------------------------------------
   */
 
   await enterBedrooms(
-    page
+    page,
+    listing.bedrooms
   );
 
   await enterBathrooms(
-    page
+    page,
+    listing.bathrooms
   );
 
   await enterBuiltUp(
-    page
+    page,
+    listing.built_up
   );
 
   await enterLandArea(
-    page
+    page,
+    listing.land_size
   );
 
   await enterParking(
-    page
+    page,
+    listing.parking_spaces
   );
 
   await selectFurnishing(
-  page
-);
+    page,
+    listing.furnishing
+  );
 
   /*
   |--------------------------------------------------------------------------
@@ -507,23 +676,33 @@ export async function handleUnitDetails(
   );
 
   console.log(
-    "Bedrooms: 4"
+    "Bedrooms:",
+    listing.bedrooms
   );
 
   console.log(
-    "Bathrooms: 3"
+    "Bathrooms:",
+    listing.bathrooms
   );
 
   console.log(
-    "Built-up: 2000 sqft"
+    "Built-up:",
+    listing.built_up
   );
 
   console.log(
-    "Land area: 1400 sqft"
+    "Land area:",
+    listing.land_size
   );
 
   console.log(
-    "Parking: 2"
+    "Parking:",
+    listing.parking_spaces
+  );
+
+  console.log(
+    "Furnishing:",
+    listing.furnishing
   );
 
   console.log(
@@ -536,14 +715,29 @@ export async function handleUnitDetails(
 
   return {
     success: true,
-    status: "unit_details_completed",
 
-    bedrooms: 4,
-    bathrooms: 3,
-    built_up: 2000,
-    land_area: 1400,
-    parking: 2,
+    status:
+      "unit_details_completed",
 
-    url: page.url(),
+    bedrooms:
+      listing.bedrooms,
+
+    bathrooms:
+      listing.bathrooms,
+
+    built_up:
+      listing.built_up,
+
+    land_size:
+      listing.land_size,
+
+    parking_spaces:
+      listing.parking_spaces,
+
+    furnishing:
+      listing.furnishing,
+
+    url:
+      page.url(),
   };
 }

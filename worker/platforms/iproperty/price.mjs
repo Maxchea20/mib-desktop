@@ -56,7 +56,9 @@ async function waitForPricePage(
 ) {
   const sellingPrice = await findVisible(
     [
-      page.locator("#sellingPrice"),
+      page.locator(
+        "#sellingPrice"
+      ),
 
       page.locator(
         '[da-id="selling-price-input"] input'
@@ -82,9 +84,23 @@ async function waitForPricePage(
 */
 
 async function enterSellingPrice(
-  page
+  page,
+  price
 ) {
-  const value = 500000;
+  if (
+    price === null ||
+    price === undefined ||
+    price === ""
+  ) {
+    throw new Error(
+      "Listing is missing selling price."
+    );
+  }
+
+  const value =
+    String(price)
+      .replace(/,/g, "")
+      .trim();
 
   console.log("");
 
@@ -94,7 +110,9 @@ async function enterSellingPrice(
 
   const input = await findVisible(
     [
-      page.locator("#sellingPrice"),
+      page.locator(
+        "#sellingPrice"
+      ),
 
       page.locator(
         '[da-id="selling-price-input"] input'
@@ -111,18 +129,21 @@ async function enterSellingPrice(
   await input.scrollIntoViewIfNeeded();
 
   await input.fill(
-    String(value)
+    value
   );
 
   await page.waitForTimeout(
     500
   );
 
-  const actualValue = await input
-    .inputValue()
-    .catch(() => "");
+  const actualValue =
+    await input
+      .inputValue()
+      .catch(() => "");
 
-  const normalizeNumber = (number) =>
+  const normalizeNumber = (
+    number
+  ) =>
     String(number)
       .replace(/,/g, "")
       .trim();
@@ -196,7 +217,8 @@ async function clickNext(
 */
 
 export async function handlePrice(
-  page
+  page,
+  listing
 ) {
   console.log("");
 
@@ -212,16 +234,92 @@ export async function handlePrice(
     "================================="
   );
 
+  /*
+  |--------------------------------------------------------------------------
+  | VALIDATE LISTING DATA
+  |--------------------------------------------------------------------------
+  */
+
+  if (!listing) {
+    throw new Error(
+      "Listing data was not provided to iProperty Price."
+    );
+  }
+
+  console.log(
+    "MIB Listing ID:",
+    listing.id
+  );
+
+  console.log(
+    "Selling Price:",
+    listing.price
+  );
+
   await waitForPricePage(
     page
   );
 
-  // Price type remains "None" because it is optional.
+  /*
+  |--------------------------------------------------------------------------
+  | PRICE TYPE
+  |--------------------------------------------------------------------------
+  |
+  | Price type remains "None" because it is optional.
+  |
+  |--------------------------------------------------------------------------
+  */
+
   await enterSellingPrice(
-    page
+    page,
+    listing.price
   );
 
   await clickNext(
     page
   );
+
+  console.log("");
+
+  console.log(
+    "================================="
+  );
+
+  console.log(
+    "✅ IPROPERTY PRICE COMPLETED"
+  );
+
+  console.log(
+    "================================="
+  );
+
+  console.log(
+    `Selling price: ${listing.price}`
+  );
+
+  console.log(
+    "Next clicked."
+  );
+
+  console.log(
+    "Current URL:",
+    page.url()
+  );
+
+  console.log(
+    "================================="
+  );
+
+  return {
+    success: true,
+
+    status:
+      "price_completed",
+
+    price:
+      listing.price,
+
+    url:
+      page.url(),
+  };
 }

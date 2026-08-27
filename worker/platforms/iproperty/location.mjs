@@ -542,6 +542,16 @@ async function selectIpropertyDropdown(
   label,
   option
 ) {
+  if (
+    option === undefined ||
+    option === null ||
+    option === ""
+  ) {
+    throw new Error(
+      `No value supplied for iProperty field: ${label}`
+    );
+  }
+
   console.log("");
 
   console.log(
@@ -662,12 +672,13 @@ async function selectIpropertyDropdown(
 */
 
 async function selectPropertyType(
-  page
+  page,
+  propertyType
 ) {
   await selectIpropertyDropdown(
     page,
     "Property type",
-    "Terrace / Link House"
+    propertyType
   );
 }
 
@@ -679,12 +690,13 @@ async function selectPropertyType(
 */
 
 async function selectPropertySubType(
-  page
+  page,
+  propertySubType
 ) {
   await selectIpropertyDropdown(
     page,
     "Property sub type",
-    "2-storey Terrace House"
+    propertySubType
   );
 }
 
@@ -696,12 +708,13 @@ async function selectPropertySubType(
 */
 
 async function selectPropertyUnitType(
-  page
+  page,
+  propertyUnitType
 ) {
   await selectIpropertyDropdown(
     page,
     "Property unit type",
-    "Intermediate"
+    propertyUnitType
   );
 }
 
@@ -712,36 +725,90 @@ async function selectPropertyUnitType(
 |--------------------------------------------------------------------------
 */
 
-async function selectState(page, state = "Perak") {
-    const stateInput = page.locator(
-        '[da-id="state-input-dropdown"] input[role="combobox"]'
+async function selectState(
+  page,
+  state
+) {
+  if (
+    !state
+  ) {
+    throw new Error(
+      "Listing is missing state."
+    );
+  }
+
+  console.log("");
+
+  console.log(
+    "Selecting State:",
+    state
+  );
+
+  const stateInput =
+    page.locator(
+      '[da-id="state-input-dropdown"] input[role="combobox"]'
     );
 
-    await stateInput.waitFor({ state: "visible" });
+  await stateInput.waitFor({
+    state:
+      "visible",
+    timeout:
+      ELEMENT_TIMEOUT,
+  });
 
-    // Clear whatever is currently inside
-    await stateInput.click();
-    await stateInput.press("Control+A");
-    await stateInput.fill("");
+  await stateInput.click();
 
-    // Type the state
-    await stateInput.fill(state);
+  await stateInput.press(
+    "Control+A"
+  );
 
-    // Wait for the typeahead suggestions
-    await page.waitForTimeout(500);
+  await stateInput.fill(
+    ""
+  );
 
-    // Click the matching suggestion
-    const suggestion = page.getByRole("option", { name: state }).first();
+  await stateInput.fill(
+    state
+  );
 
-    if (await suggestion.isVisible().catch(() => false)) {
-        await suggestion.click();
-    } else {
-        // Fallback: keyboard selection
-        await stateInput.press("ArrowDown");
-        await stateInput.press("Enter");
-    }
+  await page.waitForTimeout(
+    500
+  );
 
-    await page.waitForTimeout(300);
+  const suggestion =
+    page.getByRole(
+      "option",
+      {
+        name:
+          state,
+      }
+    ).first();
+
+  if (
+    await suggestion
+      .isVisible()
+      .catch(
+        () => false
+      )
+  ) {
+    await suggestion.click();
+  } else {
+    await stateInput.press(
+      "ArrowDown"
+    );
+
+    await stateInput.press(
+      "Enter"
+    );
+  }
+
+  await page.waitForTimeout(
+    300
+  );
+
+  console.log(
+    "✅ State selected:",
+    state
+  );
 }
 
 
@@ -752,12 +819,22 @@ async function selectState(page, state = "Perak") {
 */
 
 async function enterCity(
-  page
+  page,
+  city
 ) {
+  if (
+    !city
+  ) {
+    throw new Error(
+      "Listing is missing city."
+    );
+  }
+
   console.log("");
 
   console.log(
-    "Selecting City: Ipoh"
+    "Selecting City:",
+    city
   );
 
   const input =
@@ -793,11 +870,11 @@ async function enterCity(
   );
 
   console.log(
-    "Typing Ipoh..."
+    `Typing ${city}...`
   );
 
   await input.fill(
-    "Ipoh"
+    city
   );
 
   await page.waitForTimeout(
@@ -805,21 +882,25 @@ async function enterCity(
   );
 
   console.log(
-    "Looking for Ipoh suggestion..."
+    `Looking for ${city} suggestion...`
   );
 
-  const ipoh =
+  const citySuggestion =
     await findVisible(
       [
         page.getByRole(
           "option",
           {
-            name: /Ipoh/i,
+            name:
+              new RegExp(
+                `^${city}$`,
+                "i"
+              ),
           }
         ),
 
         page.getByText(
-          "Ipoh",
+          city,
           {
             exact: true,
           }
@@ -828,38 +909,47 @@ async function enterCity(
         page.locator(
           '[role="option"]'
         ).filter({
-          hasText: /Ipoh/i,
+          hasText:
+            new RegExp(
+              city,
+              "i"
+            ),
         }),
 
         page.locator(
           '[class*="suggestion" i]'
         ).filter({
-          hasText: /Ipoh/i,
+          hasText:
+            new RegExp(
+              city,
+              "i"
+            ),
         }),
       ],
       10000
     );
 
-  if (!ipoh) {
+  if (!citySuggestion) {
     throw new Error(
-      'Could not find "Ipoh" city suggestion after typing.'
+      `Could not find "${city}" city suggestion after typing.`
     );
   }
 
   console.log(
-    "✅ Ipoh found. Clicking Ipoh..."
+    `✅ ${city} found. Clicking ${city}...`
   );
 
-  await ipoh.scrollIntoViewIfNeeded();
+  await citySuggestion.scrollIntoViewIfNeeded();
 
-  await ipoh.click();
+  await citySuggestion.click();
 
   await page.waitForTimeout(
     PAGE_WAIT_MS
   );
 
   console.log(
-    "✅ City selected: Ipoh"
+    "✅ City selected:",
+    city
   );
 }
 
@@ -871,12 +961,24 @@ async function enterCity(
 */
 
 async function enterPostalCode(
-  page
+  page,
+  postalCode
 ) {
+  if (
+    postalCode === undefined ||
+    postalCode === null ||
+    postalCode === ""
+  ) {
+    throw new Error(
+      "Listing is missing postal_code."
+    );
+  }
+
   console.log("");
 
   console.log(
-    "Entering Postal Code: 31450"
+    "Entering Postal Code:",
+    postalCode
   );
 
   const input =
@@ -904,11 +1006,14 @@ async function enterPostalCode(
   await input.click();
 
   await input.fill(
-    "31450"
+    String(
+      postalCode
+    )
   );
 
   console.log(
-    "✅ Postal code entered: 31450"
+    "✅ Postal code entered:",
+    postalCode
   );
 
   await page.waitForTimeout(
@@ -924,12 +1029,13 @@ async function enterPostalCode(
 */
 
 async function selectTenure(
-  page
+  page,
+  tenure
 ) {
   await selectIpropertyDropdown(
     page,
     "Tenure",
-    "Leasehold"
+    tenure
   );
 }
 
@@ -941,29 +1047,39 @@ async function selectTenure(
 */
 
 async function selectIndividualTitle(
-  page
+  page,
+  titleType
 ) {
+  if (
+    !titleType
+  ) {
+    throw new Error(
+      "Listing is missing title_type."
+    );
+  }
+
   console.log("");
 
   console.log(
-    "Selecting Title type: Individual"
+    "Selecting Title type:",
+    titleType
   );
 
-  const individual =
+  const title =
     await findVisible(
       [
         page.getByRole(
           "button",
           {
             name:
-              "Individual",
+              titleType,
             exact:
               true,
           }
         ),
 
         page.getByText(
-          "Individual",
+          titleType,
           {
             exact:
               true,
@@ -973,22 +1089,23 @@ async function selectIndividualTitle(
       10000
     );
 
-  if (!individual) {
+  if (!title) {
     throw new Error(
-      'Could not find "Individual" title type.'
+      `Could not find "${titleType}" title type.`
     );
   }
 
-  await individual.scrollIntoViewIfNeeded();
+  await title.scrollIntoViewIfNeeded();
 
-  await individual.click();
+  await title.click();
 
   await page.waitForTimeout(
     PAGE_WAIT_MS
   );
 
   console.log(
-    "✅ Title type selected: Individual"
+    "✅ Title type selected:",
+    titleType
   );
 }
 
@@ -1082,43 +1199,151 @@ export async function handleLocation(
 
   /*
   |--------------------------------------------------------------------------
+  | VALIDATE LISTING
+  |--------------------------------------------------------------------------
+  */
+
+  if (!listing) {
+    throw new Error(
+      "Listing data was not provided to iProperty Location."
+    );
+  }
+
+  console.log(
+    "MIB Listing ID:",
+    listing.id
+  );
+
+  console.log(
+    "Property:",
+    listing.title
+  );
+
+  console.log(
+    "Property Type:",
+    listing.property_type
+  );
+
+  console.log(
+    "Property Sub Type:",
+    listing.property_sub_type
+  );
+
+  console.log(
+    "Property Unit Type:",
+    listing.unit_type
+  );
+
+  console.log(
+    "State:",
+    listing.state
+  );
+
+  console.log(
+    "City:",
+    listing.city
+  );
+
+  console.log(
+    "Township:",
+    listing.area
+  );
+
+  console.log(
+    "Postal Code:",
+    listing.postal_code
+  );
+
+  console.log(
+    "Tenure:",
+    listing.tenure
+  );
+
+  console.log(
+    "Title Type:",
+    listing.title_type
+  );
+
+  /*
+  |--------------------------------------------------------------------------
   | PROPERTY TITLE
   |--------------------------------------------------------------------------
   */
 
-  let propertyName =
-    listing?.property_name ||
-    listing?.title ||
-    listing?.name;
-
-  /*
-  |--------------------------------------------------------------------------
-  | MANUAL BROWSER TEST FALLBACK
-  |--------------------------------------------------------------------------
-  */
-
-  if (
-    !propertyName &&
-    listing?.source ===
-      "manual_browser_test"
-  ) {
-    propertyName =
-      "Double-storey terrace in Bandar Cyber, Perak";
-  }
-
-  if (
-    !propertyName &&
-    listing?.payload?.source ===
-      "manual_browser_test"
-  ) {
-    propertyName =
-      "Double-storey terrace in Bandar Cyber, Perak";
-  }
+  const propertyName =
+    listing.property_name ||
+    listing.title ||
+    listing.name;
 
   if (!propertyName) {
     throw new Error(
-      "No property title found in listing payload."
+      "No property title found in Supabase listing."
     );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | REQUIRED DATA
+  |--------------------------------------------------------------------------
+  */
+
+  const requiredFields = [
+    [
+      "property_type",
+      listing.property_type,
+    ],
+
+    [
+      "property_sub_type",
+      listing.property_sub_type,
+    ],
+
+    [
+      "unit_type",
+      listing.unit_type,
+    ],
+
+    [
+      "state",
+      listing.state,
+    ],
+
+    [
+      "city",
+      listing.city,
+    ],
+
+    [
+      "postal_code",
+      listing.postal_code,
+    ],
+
+    [
+      "tenure",
+      listing.tenure,
+    ],
+
+    [
+      "title_type",
+      listing.title_type,
+    ],
+  ];
+
+  for (
+    const [
+      field,
+      value,
+    ] of requiredFields
+  ) {
+    if (
+      value === undefined ||
+      value === null ||
+      value === ""
+    ) {
+      throw new Error(
+        `Supabase listing #${listing.id} is missing required field: ${field}`
+      );
+    }
   }
 
   /*
@@ -1159,7 +1384,8 @@ export async function handleLocation(
   */
 
   await selectPropertyType(
-    page
+    page,
+    listing.property_type
   );
 
   /*
@@ -1169,7 +1395,8 @@ export async function handleLocation(
   */
 
   await selectPropertySubType(
-    page
+    page,
+    listing.property_sub_type
   );
 
   /*
@@ -1179,7 +1406,8 @@ export async function handleLocation(
   */
 
   await selectPropertyUnitType(
-    page
+    page,
+    listing.unit_type
   );
 
   /*
@@ -1189,7 +1417,8 @@ export async function handleLocation(
   */
 
   await selectState(
-    page
+    page,
+    listing.state
   );
 
   /*
@@ -1199,7 +1428,8 @@ export async function handleLocation(
   */
 
   await enterCity(
-    page
+    page,
+    listing.city
   );
 
   /*
@@ -1209,7 +1439,8 @@ export async function handleLocation(
   */
 
   await enterPostalCode(
-    page
+    page,
+    listing.postal_code
   );
 
   /*
@@ -1219,7 +1450,8 @@ export async function handleLocation(
   */
 
   await selectTenure(
-    page
+    page,
+    listing.tenure
   );
 
   /*
@@ -1229,7 +1461,8 @@ export async function handleLocation(
   */
 
   await selectIndividualTitle(
-    page
+    page,
+    listing.title_type
   );
 
   /*
@@ -1268,35 +1501,48 @@ export async function handleLocation(
   );
 
   console.log(
-    "Property type: Terrace / Link House"
+    "Property type:",
+    listing.property_type
   );
 
   console.log(
-    "Property sub type: 2-storey Terrace House"
+    "Property sub type:",
+    listing.property_sub_type
   );
 
   console.log(
-    "Property unit type: Intermediate"
+    "Property unit type:",
+    listing.unit_type
   );
 
   console.log(
-    "State: Perak"
+    "State:",
+    listing.state
   );
 
   console.log(
-    "City: Ipoh"
+    "City:",
+    listing.city
   );
 
   console.log(
-    "Postal code: 31450"
+    "Township:",
+    listing.area
   );
 
   console.log(
-    "Tenure: Leasehold"
+    "Postal code:",
+    listing.postal_code
   );
 
   console.log(
-    "Title type: Individual"
+    "Tenure:",
+    listing.tenure
+  );
+
+  console.log(
+    "Title type:",
+    listing.title_type
   );
 
   console.log(
@@ -1318,28 +1564,31 @@ export async function handleLocation(
       propertyName,
 
     property_type:
-      "Terrace / Link House",
+      listing.property_type,
 
     property_sub_type:
-      "2-storey Terrace House",
+      listing.property_sub_type,
 
     property_unit_type:
-      "Intermediate",
+      listing.unit_type,
 
     state:
-      "Perak",
+      listing.state,
 
     city:
-      "Ipoh",
+      listing.city,
+
+    township:
+      listing.area,
 
     postal_code:
-      "31450",
+      listing.postal_code,
 
     tenure:
-      "Leasehold",
+      listing.tenure,
 
     title_type:
-      "Individual",
+      listing.title_type,
 
     url:
       page.url(),

@@ -301,6 +301,161 @@ async function failJob(
 async function executeJob(
   job
 ) {
+  /*
+  |--------------------------------------------------------------------------
+  | LOAD MIB LISTING DATA
+  |--------------------------------------------------------------------------
+  |
+  | iProperty jobs carry the MIB listing ID inside:
+  |
+  | job.payload.listing_id
+  |
+  | Load the complete property record from Supabase once here
+  | and pass it through the existing job object as job.listing.
+  |
+  |--------------------------------------------------------------------------
+  */
+
+  if (
+    job.job_type ===
+      "iproperty_create_listing"
+  ) {
+    const listingId =
+      job.payload?.listing_id;
+
+    if (
+      listingId === undefined ||
+      listingId === null ||
+      listingId === ""
+    ) {
+      throw new Error(
+        "iProperty job is missing payload.listing_id."
+      );
+    }
+
+    console.log("");
+
+    console.log(
+      "Loading MIB listing from Supabase..."
+    );
+
+    console.log(
+      "Listing ID:",
+      listingId
+    );
+
+    const {
+      data: listing,
+      error,
+    } =
+      await supabase
+        .from(
+          "properties"
+        )
+        .select("*")
+        .eq(
+          "id",
+          listingId
+        )
+        .single();
+
+    if (error) {
+      throw new Error(
+        `Could not load MIB listing #${listingId}: ${error.message}`
+      );
+    }
+
+    if (!listing) {
+      throw new Error(
+        `MIB listing #${listingId} was not found.`
+      );
+    }
+
+    job.listing =
+      listing;
+
+    console.log(
+      "✅ MIB listing loaded."
+    );
+
+    console.log(
+      "Title:",
+      listing.title
+    );
+
+    console.log(
+      "Category:",
+      listing.category
+    );
+
+    console.log(
+      "Purpose:",
+      listing.purpose
+    );
+
+    console.log(
+      "Property Type:",
+      listing.property_type
+    );
+
+    console.log(
+      "Property Sub Type:",
+      listing.property_sub_type
+    );
+
+    console.log(
+      "Unit Type:",
+      listing.unit_type
+    );
+
+    console.log(
+      "Area:",
+      listing.area
+    );
+
+    console.log(
+      "City:",
+      listing.city
+    );
+
+    console.log(
+      "State:",
+      listing.state
+    );
+
+    console.log(
+      "Bedrooms:",
+      listing.bedrooms
+    );
+
+    console.log(
+      "Bathrooms:",
+      listing.bathrooms
+    );
+
+    console.log(
+      "Built-up:",
+      listing.built_up
+    );
+
+    console.log(
+      "Land size:",
+      listing.land_size
+    );
+
+    console.log(
+      "Parking:",
+      listing.parking_spaces
+    );
+
+    console.log(
+      "Furnishing:",
+      listing.furnishing
+    );
+
+    console.log("");
+  }
+
   switch (
     job.job_type
   ) {

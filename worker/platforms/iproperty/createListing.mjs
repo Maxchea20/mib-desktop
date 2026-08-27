@@ -26,6 +26,14 @@ import {
   handleGallery,
 } from "./gallery.mjs";
 
+import {
+  handlePlatformPosting,
+} from "./platformPosting.mjs";
+
+import {
+  handlePreview,
+} from "./preview.mjs";
+
 /*
 |--------------------------------------------------------------------------
 | iPROPERTY PRO
@@ -396,28 +404,40 @@ export async function handleIpropertyCreateListing(
   */
 
   await handleListingType(
-  page
+  page,
+  job.listing
 );
 
 await handleLocation(
   page,
-  job
+  job.listing
 );
 
 await handleUnitDetails(
   page,
-  job
+  job.listing
 );
 
 await handlePrice(
-  page
+  page,
+  job.listing
 );
 
 await handleDescription(
-  page
+  page,
+  job.listing
 );
 
 await handleGallery(
+  page,
+  job.listing
+);
+
+await handlePlatformPosting(
+  page
+);
+
+await handlePreview(
   page
 );
 

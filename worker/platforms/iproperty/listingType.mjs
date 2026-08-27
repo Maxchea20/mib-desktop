@@ -26,11 +26,58 @@ async function findVisible(locators) {
 
 /*
 |--------------------------------------------------------------------------
+| NORMALIZE PURPOSE
+|--------------------------------------------------------------------------
+|
+| MIB / Supabase may use:
+|
+| "For Sale"
+| "Sale"
+| "For Rent"
+| "Rent"
+|
+| iProperty uses:
+|
+| "Sale"
+| "Rent"
+|
+|--------------------------------------------------------------------------
+*/
+
+function normalizePurpose(purpose) {
+  const value = String(purpose)
+    .trim()
+    .toLowerCase();
+
+  if (
+    value === "for sale" ||
+    value === "sale"
+  ) {
+    return "Sale";
+  }
+
+  if (
+    value === "for rent" ||
+    value === "rent"
+  ) {
+    return "Rent";
+  }
+
+  throw new Error(
+    `Unsupported listing purpose: "${purpose}". Expected Sale, For Sale, Rent, or For Rent.`
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
 | HANDLE LISTING TYPE PAGE
 |--------------------------------------------------------------------------
 */
 
-export async function handleListingType(page) {
+export async function handleListingType(
+  page,
+  listing
+) {
   console.log("");
   console.log("=================================");
   console.log("IPROPERTY LISTING TYPE");
@@ -38,7 +85,62 @@ export async function handleListingType(page) {
 
   /*
   |--------------------------------------------------------------------------
-  | Verify page
+  | VALIDATE LISTING DATA
+  |--------------------------------------------------------------------------
+  */
+
+  if (!listing) {
+    throw new Error(
+      "Listing data was not provided to iProperty Listing Type."
+    );
+  }
+
+  if (!listing.category) {
+    throw new Error(
+      "Listing is missing category."
+    );
+  }
+
+  if (!listing.purpose) {
+    throw new Error(
+      "Listing is missing purpose."
+    );
+  }
+
+  console.log(
+    "MIB Listing ID:",
+    listing.id
+  );
+
+  console.log(
+    "Property Category:",
+    listing.category
+  );
+
+  console.log(
+    "Supabase Purpose:",
+    listing.purpose
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | NORMALIZE PURPOSE FOR IPROPERTY
+  |--------------------------------------------------------------------------
+  */
+
+  const ipropertyPurpose =
+    normalizePurpose(
+      listing.purpose
+    );
+
+  console.log(
+    "iProperty Purpose:",
+    ipropertyPurpose
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | VERIFY PAGE
   |--------------------------------------------------------------------------
   */
 
@@ -46,11 +148,15 @@ export async function handleListingType(page) {
     "Checking iProperty Listing Type screen..."
   );
 
-  const createNewListing = await findVisible([
-    page.getByText("Create new listing", {
-      exact: true,
-    }),
-  ]);
+  const createNewListing =
+    await findVisible([
+      page.getByText(
+        "Create new listing",
+        {
+          exact: true,
+        }
+      ),
+    ]);
 
   if (!createNewListing) {
     throw new Error(
@@ -64,67 +170,84 @@ export async function handleListingType(page) {
 
   /*
   |--------------------------------------------------------------------------
-  | Residential
+  | PROPERTY CATEGORY
   |--------------------------------------------------------------------------
   */
 
   console.log(
-    "Selecting Residential..."
+    `Selecting ${listing.category}...`
   );
 
-  const residential = await findVisible([
-    page.getByText("Residential", {
-      exact: true,
-    }),
-  ]);
+  const category =
+    await findVisible([
+      page.getByText(
+        listing.category,
+        {
+          exact: true,
+        }
+      ),
+    ]);
 
-  if (!residential) {
+  if (!category) {
     throw new Error(
-      "Could not find Residential option."
+      `Could not find iProperty category option: "${listing.category}".`
     );
   }
 
-  await residential.click();
+  await category.click();
 
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(
+    500
+  );
 
   console.log(
-    "✅ Residential selected."
+    `✅ ${listing.category} selected.`
   );
 
   /*
   |--------------------------------------------------------------------------
-  | Sale
+  | PURPOSE
   |--------------------------------------------------------------------------
   */
 
   console.log(
-    "Selecting Sale..."
+    `Selecting ${ipropertyPurpose}...`
   );
 
-  const sale = await findVisible([
-    page.getByText("Sale", {
-      exact: true,
-    }),
-  ]);
+  const purpose =
+    await findVisible([
+      page.getByText(
+        ipropertyPurpose,
+        {
+          exact: true,
+        }
+      ),
+    ]);
 
-  if (!sale) {
+  if (!purpose) {
     throw new Error(
-      "Could not find Sale option."
+      `Could not find iProperty purpose option: "${ipropertyPurpose}".`
     );
   }
 
-  await sale.click();
+  await purpose.click();
 
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(
+    500
+  );
 
   console.log(
-    "✅ Sale selected."
+    `✅ ${ipropertyPurpose} selected.`
   );
 
   /*
   |--------------------------------------------------------------------------
-  | Immediately
+  | IMMEDIATELY
+  |--------------------------------------------------------------------------
+  |
+  | This remains unchanged because the current MIB properties
+  | data does not contain a listing timing field.
+  |
   |--------------------------------------------------------------------------
   */
 
@@ -132,11 +255,15 @@ export async function handleListingType(page) {
     "Selecting Immediately..."
   );
 
-  const immediately = await findVisible([
-    page.getByText("Immediately", {
-      exact: true,
-    }),
-  ]);
+  const immediately =
+    await findVisible([
+      page.getByText(
+        "Immediately",
+        {
+          exact: true,
+        }
+      ),
+    ]);
 
   if (!immediately) {
     throw new Error(
@@ -146,7 +273,9 @@ export async function handleListingType(page) {
 
   await immediately.click();
 
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(
+    500
+  );
 
   console.log(
     "✅ Immediately selected."
@@ -154,7 +283,7 @@ export async function handleListingType(page) {
 
   /*
   |--------------------------------------------------------------------------
-  | Next
+  | NEXT
   |--------------------------------------------------------------------------
   */
 
@@ -162,15 +291,22 @@ export async function handleListingType(page) {
     "Looking for Next button..."
   );
 
-  const next = await findVisible([
-    page.getByRole("button", {
-      name: /^Next$/i,
-    }),
+  const next =
+    await findVisible([
+      page.getByRole(
+        "button",
+        {
+          name: /^Next$/i,
+        }
+      ),
 
-    page.getByText("Next", {
-      exact: true,
-    }),
-  ]);
+      page.getByText(
+        "Next",
+        {
+          exact: true,
+        }
+      ),
+    ]);
 
   if (!next) {
     throw new Error(
@@ -190,21 +326,30 @@ export async function handleListingType(page) {
 
   /*
   |--------------------------------------------------------------------------
-  | Wait for Location page
+  | WAIT FOR LOCATION PAGE
   |--------------------------------------------------------------------------
   */
 
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(
+    1500
+  );
 
-  const locationScreen = await findVisible([
-    page.getByText("Confirm location details", {
-      exact: true,
-    }),
+  const locationScreen =
+    await findVisible([
+      page.getByText(
+        "Confirm location details",
+        {
+          exact: true,
+        }
+      ),
 
-    page.getByText("Property name", {
-      exact: true,
-    }),
-  ]);
+      page.getByText(
+        "Property name",
+        {
+          exact: true,
+        }
+      ),
+    ]);
 
   if (!locationScreen) {
     throw new Error(
@@ -219,9 +364,11 @@ export async function handleListingType(page) {
   console.log(
     "================================="
   );
+
   console.log(
     "✅ LISTING TYPE COMPLETED"
   );
+
   console.log(
     "================================="
   );
