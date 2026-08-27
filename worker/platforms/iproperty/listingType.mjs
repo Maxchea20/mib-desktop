@@ -70,6 +70,48 @@ function normalizePurpose(purpose) {
 
 /*
 |--------------------------------------------------------------------------
+| NORMALIZE CATEGORY FOR IPROPERTY
+|--------------------------------------------------------------------------
+|
+| MIB / Supabase categories:
+|
+| Residential
+| Commercial
+| Industrial
+|
+| iProperty Listing Type screen:
+|
+| Residential
+| Commercial
+|
+| Industrial listings enter through Commercial.
+|
+|--------------------------------------------------------------------------
+*/
+
+function normalizeCategory(category) {
+  const value = String(category)
+    .trim()
+    .toLowerCase();
+
+  if (value === "residential") {
+    return "Residential";
+  }
+
+  if (
+    value === "commercial" ||
+    value === "industrial"
+  ) {
+    return "Commercial";
+  }
+
+  throw new Error(
+    `Unsupported listing category: "${category}". Expected Residential, Commercial, or Industrial.`
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
 | HANDLE LISTING TYPE PAGE
 |--------------------------------------------------------------------------
 */
@@ -113,13 +155,29 @@ export async function handleListingType(
   );
 
   console.log(
-    "Property Category:",
+    "MIB Property Category:",
     listing.category
   );
 
   console.log(
     "Supabase Purpose:",
     listing.purpose
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | NORMALIZE CATEGORY FOR IPROPERTY
+  |--------------------------------------------------------------------------
+  */
+
+  const ipropertyCategory =
+    normalizeCategory(
+      listing.category
+    );
+
+  console.log(
+    "iProperty Category:",
+    ipropertyCategory
   );
 
   /*
@@ -175,13 +233,13 @@ export async function handleListingType(
   */
 
   console.log(
-    `Selecting ${listing.category}...`
+    `Selecting iProperty category: ${ipropertyCategory}...`
   );
 
   const category =
     await findVisible([
       page.getByText(
-        listing.category,
+        ipropertyCategory,
         {
           exact: true,
         }
@@ -190,9 +248,11 @@ export async function handleListingType(
 
   if (!category) {
     throw new Error(
-      `Could not find iProperty category option: "${listing.category}".`
+      `Could not find iProperty category option: "${ipropertyCategory}". MIB category was "${listing.category}".`
     );
   }
+
+  await category.scrollIntoViewIfNeeded();
 
   await category.click();
 
@@ -201,7 +261,7 @@ export async function handleListingType(
   );
 
   console.log(
-    `✅ ${listing.category} selected.`
+    `✅ iProperty category selected: ${ipropertyCategory}.`
   );
 
   /*
@@ -229,6 +289,8 @@ export async function handleListingType(
       `Could not find iProperty purpose option: "${ipropertyPurpose}".`
     );
   }
+
+  await purpose.scrollIntoViewIfNeeded();
 
   await purpose.click();
 
@@ -270,6 +332,8 @@ export async function handleListingType(
       "Could not find Immediately option."
     );
   }
+
+  await immediately.scrollIntoViewIfNeeded();
 
   await immediately.click();
 
@@ -317,6 +381,8 @@ export async function handleListingType(
   console.log(
     "✅ Next button found."
   );
+
+  await next.scrollIntoViewIfNeeded();
 
   await next.click();
 
@@ -376,5 +442,14 @@ export async function handleListingType(
   return {
     success: true,
     status: "location_ready",
+
+    mib_category:
+      listing.category,
+
+    iproperty_category:
+      ipropertyCategory,
+
+    purpose:
+      ipropertyPurpose,
   };
 }

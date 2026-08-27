@@ -3,17 +3,28 @@
 | iPROPERTY PRO - UNIT DETAILS
 |--------------------------------------------------------------------------
 |
-| Handles:
+| RESIDENTIAL:
+| - Bedrooms
+| - Bathrooms
+| - Built-up
+| - Land area
+| - Parking
+| - Furnishing
 |
-| 1. Bedrooms
-| 2. Bathrooms
-| 3. Built-up
-| 4. Land area
-| 5. Parking spots
-| 6. Furnishing
-| 7. Click Next
+| COMMERCIAL:
+| - Bathrooms
+| - Built-up
+| - Condition
+| - Electricity phase
+| - Electricity supply
 |
-| DATA DRIVEN VERSION
+| INDUSTRIAL:
+| - Bathrooms
+| - Built-up
+| - Land area
+| - Condition
+| - Electricity phase
+| - Electricity supply
 |
 |--------------------------------------------------------------------------
 */
@@ -46,13 +57,14 @@ async function findVisible(
         i < count;
         i++
       ) {
-        const element = locator.nth(i);
+        const element =
+          locator.nth(i);
 
-        const visible = await element
-          .isVisible()
-          .catch(() => false);
-
-        if (visible) {
+        if (
+          await element
+            .isVisible()
+            .catch(() => false)
+        ) {
           return element;
         }
       }
@@ -68,36 +80,126 @@ async function findVisible(
 
 /*
 |--------------------------------------------------------------------------
+| HAS VALUE
+|--------------------------------------------------------------------------
+*/
+
+function hasValue(value) {
+  return (
+    value !== null &&
+    value !== undefined &&
+    String(value).trim() !== ""
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
 | WAIT FOR UNIT DETAILS PAGE
 |--------------------------------------------------------------------------
 */
 
 async function waitForUnitDetailsPage(
-  page
+  page,
+  category
 ) {
   console.log(
     "Waiting for iProperty Unit Details page..."
   );
 
-  const unitDetails = await findVisible(
-    [
-      page.locator(
-        '[da-id="bedrooms-input-stepper"]'
-      ),
+  const locators = [];
 
+  /*
+  |--------------------------------------------------------------------------
+  | COMMERCIAL / INDUSTRIAL
+  |--------------------------------------------------------------------------
+  |
+  | Both Commercial and Industrial have:
+  | - Condition
+  | - Electricity phase
+  | - Electricity supply
+  |
+  */
+
+  const normalizedCategory =
+    String(category || "")
+      .trim()
+      .toLowerCase();
+
+  if (
+    normalizedCategory === "commercial" ||
+    normalizedCategory === "industrial"
+  ) {
+    locators.push(
       page.getByText(
-        "Unit details",
+        "Condition",
         {
           exact: true,
         }
       ),
 
-      page.locator(
-        ".unit-details"
+      page.getByText(
+        "Electricity",
+        {
+          exact: true,
+        }
       ),
-    ],
-    15000
+
+      page.getByText(
+        "Electricity phase",
+        {
+          exact: true,
+        }
+      )
+    );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | RESIDENTIAL
+  |--------------------------------------------------------------------------
+  */
+
+  if (
+    normalizedCategory === "residential"
+  ) {
+    locators.push(
+      page.locator(
+        '[da-id="bedrooms-input-stepper"]'
+      )
+    );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | COMMON PAGE INDICATORS
+  |--------------------------------------------------------------------------
+  */
+
+  locators.push(
+    page.getByText(
+      "Unit details",
+      {
+        exact: true,
+      }
+    ),
+
+    page.locator(
+      ".unit-details"
+    ),
+
+    page.getByText(
+      "Rooms",
+      {
+        exact: true,
+      }
+    )
   );
+
+  const unitDetails =
+    await findVisible(
+      locators,
+      15000
+    );
 
   if (!unitDetails) {
     throw new Error(
@@ -112,7 +214,7 @@ async function waitForUnitDetailsPage(
 
 /*
 |--------------------------------------------------------------------------
-| FILL NUMBER FIELD
+| FILL NUMBER / TEXT INPUT
 |--------------------------------------------------------------------------
 */
 
@@ -122,16 +224,23 @@ async function fillNumberField(
   selectors,
   value
 ) {
+  if (!hasValue(value)) {
+    throw new Error(
+      `${fieldName} is required but Supabase value is empty.`
+    );
+  }
+
   console.log("");
 
   console.log(
     `Entering ${fieldName}: ${value}`
   );
 
-  const input = await findVisible(
-    selectors,
-    10000
-  );
+  const input =
+    await findVisible(
+      selectors,
+      10000
+    );
 
   if (!input) {
     throw new Error(
@@ -180,6 +289,81 @@ async function fillNumberField(
 
 /*
 |--------------------------------------------------------------------------
+| SELECT TEXT OPTION
+|--------------------------------------------------------------------------
+*/
+
+async function selectTextOption(
+  page,
+  fieldName,
+  value
+) {
+  if (!hasValue(value)) {
+    throw new Error(
+      `${fieldName} is required but Supabase value is empty.`
+    );
+  }
+
+  const normalizedValue =
+    String(value).trim();
+
+  console.log("");
+
+  console.log(
+    `Selecting ${fieldName}: ${normalizedValue}`
+  );
+
+  const escapedValue =
+    normalizedValue.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
+    );
+
+  const option =
+    await findVisible(
+      [
+        page.getByRole(
+          "button",
+          {
+            name:
+              new RegExp(
+                `^${escapedValue}$`,
+                "i"
+              ),
+          }
+        ),
+
+        page.getByText(
+          new RegExp(
+            `^${escapedValue}$`,
+            "i"
+          )
+        ),
+      ],
+      10000
+    );
+
+  if (!option) {
+    throw new Error(
+      `Could not find "${normalizedValue}" ${fieldName} option on iProperty.`
+    );
+  }
+
+  await option.scrollIntoViewIfNeeded();
+
+  await option.click();
+
+  await page.waitForTimeout(
+    500
+  );
+
+  console.log(
+    `✅ ${fieldName} selected: ${normalizedValue}`
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
 | BEDROOMS
 |--------------------------------------------------------------------------
 */
@@ -188,18 +372,6 @@ async function enterBedrooms(
   page,
   bedrooms
 ) {
-  if (
-    bedrooms === null ||
-    bedrooms === undefined ||
-    bedrooms === ""
-  ) {
-    console.log(
-      "Bedrooms: no value provided. Skipping."
-    );
-
-    return;
-  }
-
   await fillNumberField(
     page,
     "Bedrooms",
@@ -226,18 +398,6 @@ async function enterBathrooms(
   page,
   bathrooms
 ) {
-  if (
-    bathrooms === null ||
-    bathrooms === undefined ||
-    bathrooms === ""
-  ) {
-    console.log(
-      "Bathrooms: no value provided. Skipping."
-    );
-
-    return;
-  }
-
   await fillNumberField(
     page,
     "Bathrooms",
@@ -248,6 +408,10 @@ async function enterBathrooms(
 
       page.locator(
         '[da-id="bathrooms-input-stepper"] input'
+      ),
+
+      page.locator(
+        '[da-id="bathrooms-input-stepper"] input[type="number"]'
       ),
     ],
     bathrooms
@@ -264,18 +428,6 @@ async function enterBuiltUp(
   page,
   builtUp
 ) {
-  if (
-    builtUp === null ||
-    builtUp === undefined ||
-    builtUp === ""
-  ) {
-    console.log(
-      "Built-up: no value provided. Skipping."
-    );
-
-    return;
-  }
-
   await fillNumberField(
     page,
     "Built-up",
@@ -286,6 +438,17 @@ async function enterBuiltUp(
 
       page.locator(
         '[da-id="built-up-input"] input'
+      ),
+
+      page.getByPlaceholder(
+        "Enter built-up",
+        {
+          exact: true,
+        }
+      ),
+
+      page.locator(
+        'input[placeholder="Enter built-up"]'
       ),
     ],
     builtUp
@@ -302,18 +465,6 @@ async function enterLandArea(
   page,
   landArea
 ) {
-  if (
-    landArea === null ||
-    landArea === undefined ||
-    landArea === ""
-  ) {
-    console.log(
-      "Land area: no value provided. Skipping."
-    );
-
-    return;
-  }
-
   await fillNumberField(
     page,
     "Land area",
@@ -324,6 +475,17 @@ async function enterLandArea(
 
       page.locator(
         '[da-id="land-area-input"] input'
+      ),
+
+      page.getByPlaceholder(
+        "Enter land area",
+        {
+          exact: true,
+        }
+      ),
+
+      page.locator(
+        'input[placeholder="Enter land area"]'
       ),
     ],
     landArea
@@ -340,18 +502,6 @@ async function enterParking(
   page,
   parking
 ) {
-  if (
-    parking === null ||
-    parking === undefined ||
-    parking === ""
-  ) {
-    console.log(
-      "Parking: no value provided. Skipping."
-    );
-
-    return;
-  }
-
   await fillNumberField(
     page,
     "Parking spots",
@@ -372,57 +522,95 @@ async function enterParking(
 |--------------------------------------------------------------------------
 | FURNISHING
 |--------------------------------------------------------------------------
+|
+| Supabase / MIB stores:
+|
+| fully_furnished
+| partially_furnished
+| unfurnished
+|
+| iProperty displays:
+|
+| Fully Furnished
+| Partially Furnished
+| Unfurnished
+|
+|--------------------------------------------------------------------------
 */
+
+function getIpropertyFurnishingLabel(
+  furnishing
+) {
+  const normalized =
+    String(furnishing || "")
+      .trim()
+      .toLowerCase();
+
+  const furnishingMap = {
+    fully_furnished:
+      "Fully Furnished",
+
+    partially_furnished:
+      "Partially Furnished",
+
+    unfurnished:
+      "Unfurnished",
+  };
+
+  if (
+    furnishingMap[normalized]
+  ) {
+    return furnishingMap[normalized];
+  }
+
+  const humanReadableMap = {
+    "fully furnished":
+      "Fully Furnished",
+
+    "partially furnished":
+      "Partially Furnished",
+
+    "unfurnished":
+      "Unfurnished",
+  };
+
+  if (
+    humanReadableMap[normalized]
+  ) {
+    return humanReadableMap[normalized];
+  }
+
+  throw new Error(
+    `Unsupported furnishing value from Supabase: ${furnishing}`
+  );
+}
 
 async function selectFurnishing(
   page,
   furnishing
 ) {
+  if (!hasValue(furnishing)) {
+    throw new Error(
+      "Furnishing is required but Supabase value is empty."
+    );
+  }
+
+  const ipropertyFurnishing =
+    getIpropertyFurnishingLabel(
+      furnishing
+    );
+
   console.log("");
 
   console.log(
-    `Selecting Furnishing: ${furnishing}`
+    `Selecting Furnishing: ${furnishing} -> ${ipropertyFurnishing}`
   );
 
-  if (
-    furnishing === null ||
-    furnishing === undefined ||
-    furnishing === ""
-  ) {
-    console.log(
-      "Furnishing: no value provided. Skipping."
+  const escapedFurnishing =
+    ipropertyFurnishing.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
     );
-
-    return;
-  }
-
-  /*
-  |--------------------------------------------------------------------------
-  | NORMALIZE VALUE
-  |--------------------------------------------------------------------------
-  |
-  | Supabase may contain:
-  |
-  | unfurnished
-  | partially furnished
-  | fully furnished
-  |
-  | iProperty may display:
-  |
-  | Unfurnished
-  | Partially Furnished
-  | Fully Furnished
-  |
-  | Match case-insensitively while keeping the
-  | database as the source of truth.
-  |
-  |--------------------------------------------------------------------------
-  */
-
-  const normalizedFurnishing =
-    String(furnishing)
-      .trim()
-      .toLowerCase();
 
   const furnishingOption =
     await findVisible(
@@ -432,10 +620,7 @@ async function selectFurnishing(
           {
             name:
               new RegExp(
-                `^${normalizedFurnishing.replace(
-                  /[.*+?^${}()|[\]\\]/g,
-                  "\\$&"
-                )}$`,
+                `^${escapedFurnishing}$`,
                 "i"
               ),
           }
@@ -443,10 +628,7 @@ async function selectFurnishing(
 
         page.getByText(
           new RegExp(
-            `^${normalizedFurnishing.replace(
-              /[.*+?^${}()|[\]\\]/g,
-              "\\$&"
-            )}$`,
+            `^${escapedFurnishing}$`,
             "i"
           )
         ),
@@ -456,11 +638,13 @@ async function selectFurnishing(
 
   if (!furnishingOption) {
     throw new Error(
-      `Could not find "${furnishing}" furnishing option on iProperty.`
+      `Could not find "${ipropertyFurnishing}" furnishing option on iProperty. ` +
+      `Supabase value was "${furnishing}".`
     );
   }
 
-  await furnishingOption.scrollIntoViewIfNeeded();
+  await furnishingOption
+    .scrollIntoViewIfNeeded();
 
   await furnishingOption.click();
 
@@ -469,7 +653,122 @@ async function selectFurnishing(
   );
 
   console.log(
-    `✅ Furnishing selected: ${furnishing}`
+    `✅ Furnishing selected: ${ipropertyFurnishing}`
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
+| INDUSTRIAL / COMMERCIAL CONDITION
+|--------------------------------------------------------------------------
+*/
+
+async function selectIndustrialCondition(
+  page,
+  condition
+) {
+  await selectTextOption(
+    page,
+    "Condition",
+    condition
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
+| ELECTRICITY PHASE
+|--------------------------------------------------------------------------
+*/
+
+async function selectElectricityPhase(
+  page,
+  electricityPhase
+) {
+  await selectTextOption(
+    page,
+    "Electricity phase",
+    electricityPhase
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
+| ELECTRICITY SUPPLY
+|--------------------------------------------------------------------------
+*/
+
+async function enterIndustrialPowerSupply(
+  page,
+  powerSupply
+) {
+  if (!hasValue(powerSupply)) {
+    throw new Error(
+      "industrial_power_supply is required but Supabase value is empty."
+    );
+  }
+
+  console.log("");
+
+  console.log(
+    `Entering Electricity supply: ${powerSupply}`
+  );
+
+  const input =
+    await findVisible(
+      [
+        page.getByPlaceholder(
+          "Enter electricity supply",
+          {
+            exact: true,
+          }
+        ),
+
+        page.locator(
+          'input[placeholder="Enter electricity supply"]'
+        ),
+      ],
+      10000
+    );
+
+  if (!input) {
+    throw new Error(
+      "Could not find Electricity supply input."
+    );
+  }
+
+  await input.scrollIntoViewIfNeeded();
+
+  await input.fill(
+    String(powerSupply)
+  );
+
+  await page.waitForTimeout(
+    500
+  );
+
+  const actualValue =
+    await input
+      .inputValue()
+      .catch(() => "");
+
+  const expected =
+    String(powerSupply)
+      .trim();
+
+  const actual =
+    String(actualValue)
+      .trim();
+
+  if (
+    actual !== expected
+  ) {
+    throw new Error(
+      `Electricity supply verification failed. Expected ${expected}, got ${actual}`
+    );
+  }
+
+  console.log(
+    `✅ Electricity supply entered: ${actualValue}`
   );
 }
 
@@ -488,22 +787,23 @@ async function clickNext(
     "Looking for Unit Details Next button..."
   );
 
-  const next = await findVisible(
-    [
-      page.locator(
-        '[da-id="footer-next-button"]'
-      ),
+  const next =
+    await findVisible(
+      [
+        page.locator(
+          '[da-id="footer-next-button"]'
+        ),
 
-      page.getByRole(
-        "button",
-        {
-          name: "Next",
-          exact: true,
-        }
-      ),
-    ],
-    10000
-  );
+        page.getByRole(
+          "button",
+          {
+            name: "Next",
+            exact: true,
+          }
+        ),
+      ],
+      10000
+    );
 
   if (!next) {
     throw new Error(
@@ -552,17 +852,18 @@ export async function handleUnitDetails(
     "================================="
   );
 
-  /*
-  |--------------------------------------------------------------------------
-  | VALIDATE LISTING DATA
-  |--------------------------------------------------------------------------
-  */
-
   if (!listing) {
     throw new Error(
       "Listing data was not provided to iProperty Unit Details."
     );
   }
+
+  const category =
+    String(
+      listing.category || ""
+    )
+      .trim()
+      .toLowerCase();
 
   console.log(
     "MIB Listing ID:",
@@ -570,8 +871,477 @@ export async function handleUnitDetails(
   );
 
   console.log(
-    "Bedrooms:",
-    listing.bedrooms
+    "MIB Category:",
+    listing.category
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | INDUSTRIAL WORKFLOW
+  |--------------------------------------------------------------------------
+  */
+
+  if (
+    category === "industrial"
+  ) {
+    console.log(
+      "Industrial Unit Details workflow detected."
+    );
+
+    console.log(
+      "Bathrooms:",
+      listing.bathrooms
+    );
+
+    console.log(
+      "Built-up:",
+      listing.built_up
+    );
+
+    console.log(
+      "Land area:",
+      listing.land_size
+    );
+
+    console.log(
+      "Condition:",
+      listing.condition
+    );
+
+    console.log(
+      "Electricity phase:",
+      listing.electricity_phase
+    );
+
+    console.log(
+      "Electricity supply:",
+      listing.industrial_power_supply
+    );
+
+    await waitForUnitDetailsPage(
+      page,
+      "Industrial"
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | BATHROOMS
+    |--------------------------------------------------------------------------
+    */
+
+    await enterBathrooms(
+      page,
+      listing.bathrooms
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | BUILT-UP
+    |--------------------------------------------------------------------------
+    */
+
+    await enterBuiltUp(
+      page,
+      listing.built_up
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | LAND AREA
+    |--------------------------------------------------------------------------
+    */
+
+    await enterLandArea(
+      page,
+      listing.land_size
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | CONDITION
+    |--------------------------------------------------------------------------
+    */
+
+    await selectIndustrialCondition(
+      page,
+      listing.condition
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | ELECTRICITY PHASE
+    |--------------------------------------------------------------------------
+    */
+
+    await selectElectricityPhase(
+      page,
+      listing.electricity_phase
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | ELECTRICITY SUPPLY
+    |--------------------------------------------------------------------------
+    */
+
+    await enterIndustrialPowerSupply(
+      page,
+      listing.industrial_power_supply
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | NEXT
+    |--------------------------------------------------------------------------
+    */
+
+    await clickNext(
+      page
+    );
+
+    console.log("");
+
+    console.log(
+      "================================="
+    );
+
+    console.log(
+      "✅ INDUSTRIAL UNIT DETAILS COMPLETED"
+    );
+
+    console.log(
+      "================================="
+    );
+
+    console.log(
+      "Bathrooms:",
+      listing.bathrooms
+    );
+
+    console.log(
+      "Built-up:",
+      listing.built_up
+    );
+
+    console.log(
+      "Land area:",
+      listing.land_size
+    );
+
+    console.log(
+      "Condition:",
+      listing.condition
+    );
+
+    console.log(
+      "Electricity phase:",
+      listing.electricity_phase
+    );
+
+    console.log(
+      "Electricity supply:",
+      listing.industrial_power_supply
+    );
+
+    console.log(
+      "Next clicked."
+    );
+
+    console.log(
+      "================================="
+    );
+
+    return {
+      success: true,
+
+      status:
+        "unit_details_completed",
+
+      category:
+        listing.category,
+
+      bathrooms:
+        listing.bathrooms,
+
+      built_up:
+        listing.built_up,
+
+      land_size:
+        listing.land_size,
+
+      condition:
+        listing.condition,
+
+      electricity_phase:
+        listing.electricity_phase,
+
+      industrial_power_supply:
+        listing.industrial_power_supply,
+
+      url:
+        page.url(),
+    };
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | VALIDATE STANDARD CATEGORY
+  |--------------------------------------------------------------------------
+  */
+
+  const isResidential =
+    category === "residential";
+
+  const isCommercial =
+    category === "commercial";
+
+  if (
+    !isResidential &&
+    !isCommercial
+  ) {
+    throw new Error(
+      `Unsupported Unit Details category: "${listing.category}".`
+    );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | RESIDENTIAL WORKFLOW
+  |--------------------------------------------------------------------------
+  */
+
+  if (isResidential) {
+    console.log(
+      "Residential Unit Details workflow detected."
+    );
+
+    console.log(
+      "Bedrooms:",
+      listing.bedrooms
+    );
+
+    console.log(
+      "Bathrooms:",
+      listing.bathrooms
+    );
+
+    console.log(
+      "Built-up:",
+      listing.built_up
+    );
+
+    console.log(
+      "Land area:",
+      listing.land_size
+    );
+
+    console.log(
+      "Parking:",
+      listing.parking_spaces
+    );
+
+    console.log(
+      "Furnishing:",
+      listing.furnishing
+    );
+
+    await waitForUnitDetailsPage(
+      page,
+      listing.category
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | BEDROOMS
+    |--------------------------------------------------------------------------
+    */
+
+    await enterBedrooms(
+      page,
+      listing.bedrooms
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | BATHROOMS
+    |--------------------------------------------------------------------------
+    */
+
+    await enterBathrooms(
+      page,
+      listing.bathrooms
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | BUILT-UP
+    |--------------------------------------------------------------------------
+    */
+
+    await enterBuiltUp(
+      page,
+      listing.built_up
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | LAND AREA
+    |--------------------------------------------------------------------------
+    */
+
+    await enterLandArea(
+      page,
+      listing.land_size
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | PARKING
+    |--------------------------------------------------------------------------
+    */
+
+    await enterParking(
+      page,
+      listing.parking_spaces
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | FURNISHING
+    |--------------------------------------------------------------------------
+    */
+
+    await selectFurnishing(
+      page,
+      listing.furnishing
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | NEXT
+    |--------------------------------------------------------------------------
+    */
+
+    await clickNext(
+      page
+    );
+
+    console.log("");
+
+    console.log(
+      "================================="
+    );
+
+    console.log(
+      "✅ RESIDENTIAL UNIT DETAILS COMPLETED"
+    );
+
+    console.log(
+      "================================="
+    );
+
+    console.log(
+      "Bedrooms:",
+      listing.bedrooms
+    );
+
+    console.log(
+      "Bathrooms:",
+      listing.bathrooms
+    );
+
+    console.log(
+      "Built-up:",
+      listing.built_up
+    );
+
+    console.log(
+      "Land area:",
+      listing.land_size
+    );
+
+    console.log(
+      "Parking:",
+      listing.parking_spaces
+    );
+
+    console.log(
+      "Furnishing:",
+      listing.furnishing
+    );
+
+    console.log(
+      "Next clicked."
+    );
+
+    console.log(
+      "================================="
+    );
+
+    return {
+      success: true,
+
+      status:
+        "unit_details_completed",
+
+      category:
+        listing.category,
+
+      bedrooms:
+        listing.bedrooms,
+
+      bathrooms:
+        listing.bathrooms,
+
+      built_up:
+        listing.built_up,
+
+      land_size:
+        listing.land_size,
+
+      parking_spaces:
+        listing.parking_spaces,
+
+      furnishing:
+        listing.furnishing,
+
+      url:
+        page.url(),
+    };
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | COMMERCIAL WORKFLOW
+  |--------------------------------------------------------------------------
+  |
+  | Commercial does NOT use:
+  |
+  | - Bedrooms
+  | - Built-up dimensions
+  | - Land area
+  | - Parking
+  | - Furnishing
+  |
+  | Commercial DOES use:
+  |
+  | - Bathrooms
+  | - Built-up
+  | - Condition
+  | - Electricity phase
+  | - Electricity supply
+  |
+  | Lift fields are optional and currently not data-driven.
+  |
+  |--------------------------------------------------------------------------
+  */
+
+  console.log(
+    "Commercial Unit Details workflow detected."
+  );
+
+  console.log(
+    "Bedrooms: SKIPPED"
   );
 
   console.log(
@@ -585,64 +1355,94 @@ export async function handleUnitDetails(
   );
 
   console.log(
-    "Land area:",
-    listing.land_size
+    "Built-up dimensions: SKIPPED"
   );
 
   console.log(
-    "Parking:",
-    listing.parking_spaces
+    "Land area: SKIPPED"
   );
 
   console.log(
-    "Furnishing:",
-    listing.furnishing
+    "Parking: SKIPPED"
   );
 
-  /*
-  |--------------------------------------------------------------------------
-  | WAIT
-  |--------------------------------------------------------------------------
-  */
+  console.log(
+    "Condition:",
+    listing.condition
+  );
+
+  console.log(
+    "Electricity phase:",
+    listing.electricity_phase
+  );
+
+  console.log(
+    "Electricity supply:",
+    listing.industrial_power_supply
+  );
+
+  console.log(
+    "Furnishing: SKIPPED"
+  );
 
   await waitForUnitDetailsPage(
-    page
+    page,
+    listing.category
   );
 
   /*
   |--------------------------------------------------------------------------
-  | DATA DRIVEN FIELDS
+  | BATHROOMS
   |--------------------------------------------------------------------------
   */
-
-  await enterBedrooms(
-    page,
-    listing.bedrooms
-  );
 
   await enterBathrooms(
     page,
     listing.bathrooms
   );
 
+  /*
+  |--------------------------------------------------------------------------
+  | BUILT-UP
+  |--------------------------------------------------------------------------
+  */
+
   await enterBuiltUp(
     page,
     listing.built_up
   );
 
-  await enterLandArea(
+  /*
+  |--------------------------------------------------------------------------
+  | CONDITION
+  |--------------------------------------------------------------------------
+  */
+
+  await selectIndustrialCondition(
     page,
-    listing.land_size
+    listing.condition
   );
 
-  await enterParking(
+  /*
+  |--------------------------------------------------------------------------
+  | ELECTRICITY PHASE
+  |--------------------------------------------------------------------------
+  */
+
+  await selectElectricityPhase(
     page,
-    listing.parking_spaces
+    listing.electricity_phase
   );
 
-  await selectFurnishing(
+  /*
+  |--------------------------------------------------------------------------
+  | ELECTRICITY SUPPLY
+  |--------------------------------------------------------------------------
+  */
+
+  await enterIndustrialPowerSupply(
     page,
-    listing.furnishing
+    listing.industrial_power_supply
   );
 
   /*
@@ -655,12 +1455,6 @@ export async function handleUnitDetails(
     page
   );
 
-  /*
-  |--------------------------------------------------------------------------
-  | DONE
-  |--------------------------------------------------------------------------
-  */
-
   console.log("");
 
   console.log(
@@ -668,7 +1462,7 @@ export async function handleUnitDetails(
   );
 
   console.log(
-    "✅ IPROPERTY UNIT DETAILS COMPLETED"
+    "✅ COMMERCIAL UNIT DETAILS COMPLETED"
   );
 
   console.log(
@@ -676,8 +1470,7 @@ export async function handleUnitDetails(
   );
 
   console.log(
-    "Bedrooms:",
-    listing.bedrooms
+    "Bedrooms: SKIPPED"
   );
 
   console.log(
@@ -691,18 +1484,22 @@ export async function handleUnitDetails(
   );
 
   console.log(
-    "Land area:",
-    listing.land_size
+    "Condition:",
+    listing.condition
   );
 
   console.log(
-    "Parking:",
-    listing.parking_spaces
+    "Electricity phase:",
+    listing.electricity_phase
   );
 
   console.log(
-    "Furnishing:",
-    listing.furnishing
+    "Electricity supply:",
+    listing.industrial_power_supply
+  );
+
+  console.log(
+    "Furnishing: SKIPPED"
   );
 
   console.log(
@@ -719,8 +1516,8 @@ export async function handleUnitDetails(
     status:
       "unit_details_completed",
 
-    bedrooms:
-      listing.bedrooms,
+    category:
+      listing.category,
 
     bathrooms:
       listing.bathrooms,
@@ -728,14 +1525,14 @@ export async function handleUnitDetails(
     built_up:
       listing.built_up,
 
-    land_size:
-      listing.land_size,
+    condition:
+      listing.condition,
 
-    parking_spaces:
-      listing.parking_spaces,
+    electricity_phase:
+      listing.electricity_phase,
 
-    furnishing:
-      listing.furnishing,
+    industrial_power_supply:
+      listing.industrial_power_supply,
 
     url:
       page.url(),

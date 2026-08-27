@@ -242,55 +242,71 @@ async function openListings(
 |--------------------------------------------------------------------------
 */
 
-async function openCreateListing(
-  page
-) {
+async function openCreateListing(page) {
   console.log(
     "Looking for Create Listing..."
   );
 
-  const createListing =
-    await findVisible([
-      page.getByRole(
-        "button",
-        {
-          name: /create listing/i,
-        }
-      ),
+  const startTime = Date.now();
+  const timeout = 60000;
 
-      page.getByRole(
-        "link",
-        {
-          name: /create listing/i,
-        }
-      ),
+  while (Date.now() - startTime < timeout) {
 
-      page.getByText(
-        "Create Listing",
-        {
-          exact: true,
-        }
-      ),
-    ]);
+    const createListing =
+      await findVisible([
+        page.locator(
+          '[da-id="page-header-create-listing-button"]'
+        ),
 
-  if (!createListing) {
-    throw new Error(
-      "Could not find iProperty Create Listing button."
-    );
+        page.locator(
+          'a[href="/pro/v2/add-listing"]'
+        ),
+
+        page.getByRole(
+          "link",
+          {
+            name: /create listing/i,
+          }
+        ),
+
+        page.getByText(
+          "Create Listing",
+          {
+            exact: true,
+          }
+        ),
+      ]);
+
+    if (createListing) {
+
+      console.log(
+        "✅ Create Listing button found."
+      );
+
+      await createListing.scrollIntoViewIfNeeded();
+
+      console.log(
+        "🖱️ Clicking Create Listing..."
+      );
+
+      await createListing.click();
+
+      await page.waitForTimeout(
+        PAGE_WAIT_MS
+      );
+
+      console.log(
+        "✅ Create Listing clicked."
+      );
+
+      return;
+    }
+
+    await page.waitForTimeout(1000);
   }
 
-  console.log(
-    "✅ Create Listing button found."
-  );
-
-  await createListing.click();
-
-  await page.waitForTimeout(
-    PAGE_WAIT_MS
-  );
-
-  console.log(
-    "Create Listing clicked."
+  throw new Error(
+    "Could not find iProperty Create Listing button after waiting 60 seconds."
   );
 }
 
