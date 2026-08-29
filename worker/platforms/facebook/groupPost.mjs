@@ -947,15 +947,12 @@ async function uploadPhotosToFacebook(
   console.log(
     "================================="
   );
-
   console.log(
     "FACEBOOK PHOTO UPLOAD"
   );
-
   console.log(
     "================================="
   );
-
   console.log(
     "Total photos:",
     imageFiles.length
@@ -963,64 +960,164 @@ async function uploadPhotosToFacebook(
 
   /*
   |--------------------------------------------------------------------------
-  | IMPORTANT
+  | SEQUENTIAL PHOTO UPLOAD
   |--------------------------------------------------------------------------
   |
-  | We deliberately use batches of TWO.
+  | IMPORTANT:
   |
-  | We already proved manually that Facebook accepts two of these
-  | MIB-generated files, while larger automated selections become
-  | unreliable.
+  | Upload EXACTLY ONE photo at a time.
+  |
+  | We do NOT send multiple files to Facebook
+  | in the same file-selection operation.
+  |
+  | Order:
+  |
+  | Photo 1
+  |   ↓
+  | upload
+  |   ↓
+  | wait for Facebook processing
+  |   ↓
+  | Photo 2
+  |   ↓
+  | upload
+  |   ↓
+  | wait for Facebook processing
+  |   ↓
+  | Photo 3
+  |   ↓
+  | ...
   |
   */
 
-  const BATCH_SIZE = 2;
-
-  let batchNumber = 1;
-
   for (
-    let start = 0;
-    start < imageFiles.length;
-    start += BATCH_SIZE
+    let i = 0;
+    i < imageFiles.length;
+    i++
   ) {
-    const batch =
-      imageFiles.slice(
-        start,
-        start + BATCH_SIZE
-      );
+    const imageFile =
+      imageFiles[i];
 
-    await attachPhotoBatch(
-      page,
-      batch,
-      batchNumber
+    const photoNumber =
+      i + 1;
+
+    console.log("");
+    console.log(
+      "---------------------------------"
+    );
+    console.log(
+      `FACEBOOK PHOTO ${photoNumber}/${imageFiles.length}`
+    );
+    console.log(
+      "---------------------------------"
     );
 
-    batchNumber++;
+    console.log(
+      "Uploading photo:",
+      imageFile
+    );
 
     /*
     |--------------------------------------------------------------------------
-    | Give Facebook a little breathing room before opening the
-    | next photo selection.
+    | Upload EXACTLY ONE photo
     |--------------------------------------------------------------------------
     */
 
-    if (
-      start + BATCH_SIZE <
-      imageFiles.length
-    ) {
-      console.log(
-        "Waiting before next Facebook photo batch..."
-      );
+    await attachPhotoBatch(
+      page,
+      [imageFile],
+      photoNumber
+    );
 
-      await page.waitForTimeout(
-        1500
-      );
-    }
+    /*
+    |--------------------------------------------------------------------------
+    | IMPORTANT
+    |--------------------------------------------------------------------------
+    |
+    | attachPhotoBatch() already waits for Facebook's
+    | upload indicators to disappear.
+    |
+    | We deliberately DO NOT count:
+    |
+    | [aria-label="Attached media"] img
+    |
+    | because Facebook's gallery can display:
+    |
+    |     5 photos + "+5"
+    |
+    | while the actual gallery already contains all
+    | submitted media.
+    |
+    | Therefore the DOM <img> count is NOT a reliable
+    | indication of the actual number of uploaded photos.
+    |
+    */
+
+    console.log(
+      `✅ Photo ${photoNumber}/${imageFiles.length} upload operation completed.`
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | SAFE TRANSITION WAIT
+    |--------------------------------------------------------------------------
+    |
+    | Give Facebook extra time before selecting the
+    | next photo.
+    |
+    | This is intentionally 10 seconds.
+    |
+    | We still rely on attachPhotoBatch() and its
+    | upload-processing wait before reaching this point.
+    |
+    */
+
+    if (
+  photoNumber <
+  imageFiles.length
+) {
+  console.log(
+    "Facebook upload settled. Preparing next photo..."
+  );
+
+  await page.waitForTimeout(
+    2000
+  );
+
+  console.log(
+    `Preparing photo ${photoNumber + 1}/${imageFiles.length}...`
+  );
+}
   }
+
+  /*
+  |--------------------------------------------------------------------------
+  | FINAL RESULT
+  |--------------------------------------------------------------------------
+  |
+  | DO NOT count Facebook's Attached media <img> elements.
+  |
+  | Facebook's gallery DOM is not a reliable source
+  | for the actual number of attached photos.
+  |
+  | The upload sequence itself is the source of truth:
+  |
+  |     1 → 2 → 3 → ... → N
+  |
+  */
 
   console.log("");
   console.log(
-    `✅ All ${imageFiles.length} property photo(s) sent to Facebook in controlled batches.`
+    "================================="
+  );
+  console.log(
+    `✅ All ${imageFiles.length} photo(s) uploaded sequentially.`
+  );
+  console.log(
+    "Facebook media preview is ready."
+  );
+  console.log(
+    "================================="
   );
 }
 
