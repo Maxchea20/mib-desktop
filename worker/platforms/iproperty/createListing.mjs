@@ -458,60 +458,73 @@ await handlePreview(
 );
 
   /*
-  |--------------------------------------------------------------------------
-  | IMPORTANT
-  |--------------------------------------------------------------------------
-  |
-  | We intentionally STOP here.
-  |
-  | No property type is selected.
-  | No Sale/Rent is selected.
-  | No credits are consumed.
-  | No listing is created.
-  |
-  |--------------------------------------------------------------------------
-  */
+|--------------------------------------------------------------------------
+| FINAL RESULT
+|--------------------------------------------------------------------------
+|
+| At this point:
+|
+| Listing Type
+| Location
+| Unit Details
+| Price
+| Description
+| Gallery
+| Platform Posting
+| Preview
+| Post Now
+| Confirm
+|
+| have all been completed.
+|
+|--------------------------------------------------------------------------
+*/
 
-  console.log("");
+console.log("");
 
-  console.log(
-    "================================="
-  );
+console.log(
+  "================================="
+);
 
-  console.log(
-    "✅ IPROPERTY CREATE LISTING SCREEN READY"
-  );
+console.log(
+  "✅ IPROPERTY LISTING POSTED"
+);
 
-  console.log(
-    "================================="
-  );
+console.log(
+  "================================="
+);
 
-  console.log(
-    "MIB successfully reached the Listing Type screen."
-  );
+console.log(
+  "Post now clicked."
+);
 
-  console.log(
-    "No listing was created."
-  );
+console.log(
+  "Confirm clicked."
+);
 
-  console.log(
-    "No credits were consumed."
-  );
+console.log(
+  "Returned to Active Listings."
+);
 
-  console.log(
-    "================================="
-  );
+console.log(
+  "Current URL:",
+  page.url()
+);
 
-  return {
-    success: true,
+console.log(
+  "================================="
+);
 
-    status:
-      "ready",
+return {
+  success: true,
 
-    message:
-      "iProperty PRO Create Listing screen opened successfully.",
+  status:
+    "posted",
 
-    url:
-      page.url(),
-  };
+  message:
+    "iProperty listing posted successfully.",
+
+  url:
+    page.url(),
+};
 }

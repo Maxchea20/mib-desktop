@@ -1,3 +1,5 @@
+import sharp from "sharp";
+
 const ELEMENT_TIMEOUT = 15000;
 
 /*
@@ -287,11 +289,6 @@ async function getListingPhotos(
               ? rawName
               : `${listing.id}/${fileName}`;
 
-          const mimeType =
-            object.metadata?.mimetype ||
-            object.metadata?.mimeType ||
-            "application/octet-stream";
-
           /*
           |--------------------------------------------------------------------------
           | ENCODE EACH PATH PART
@@ -317,6 +314,28 @@ async function getListingPhotos(
 
           const url =
             `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${encodedPath}`;
+
+          /*
+          |--------------------------------------------------------------------------
+          | RETURN PHOTO INFORMATION
+          |--------------------------------------------------------------------------
+          */
+
+          const lowerFileName =
+            String(
+              fileName
+            ).toLowerCase();
+
+          const mimeType =
+            lowerFileName.endsWith(".png")
+              ? "image/png"
+              : lowerFileName.endsWith(".webp")
+                ? "image/webp"
+                : lowerFileName.endsWith(".gif")
+                  ? "image/gif"
+                  : lowerFileName.endsWith(".avif")
+                    ? "image/avif"
+                    : "image/jpeg";
 
           return {
             url,
@@ -368,8 +387,20 @@ async function getListingPhotos(
 
 /*
 |--------------------------------------------------------------------------
-| DOWNLOAD PHOTO
+| DOWNLOAD + SMART PHOTO OPTIMIZATION
 |--------------------------------------------------------------------------
+|
+| Rules:
+|
+| 1. Download the original image.
+| 2. Let Sharp detect the actual image format.
+| 3. Correct orientation.
+| 4. Resize only when necessary.
+| 5. Create an optimized JPEG.
+| 6. NEVER use the optimized version if it is larger
+|    than the original.
+| 7. Never modify the original Supabase image.
+|
 */
 
 async function downloadPhoto(
@@ -390,21 +421,202 @@ async function downloadPhoto(
     );
   }
 
-  const fileBuffer =
+  const originalBuffer =
     Buffer.from(
       await response.arrayBuffer()
     );
 
-  return {
-    name:
-      photo.fileName,
+  if (
+    originalBuffer.length === 0
+  ) {
+    throw new Error(
+      `Downloaded image is empty: ${photo.fileName}`
+    );
+  }
 
-    mimeType:
-      photo.mimeType,
+  const originalSize =
+    originalBuffer.length;
 
-    buffer:
-      fileBuffer,
-  };
+  console.log(
+    `Original size: ${Math.round(
+      originalSize / 1024
+    )} KB`
+  );
+
+  try {
+    /*
+    |--------------------------------------------------------------------------
+    | READ IMAGE INFORMATION
+    |--------------------------------------------------------------------------
+    */
+
+    const metadata =
+      await sharp(
+        originalBuffer
+      ).metadata();
+
+    const originalWidth =
+      metadata.width || 0;
+
+    const originalHeight =
+      metadata.height || 0;
+
+    console.log(
+      `Original dimensions: ${originalWidth} x ${originalHeight}`
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | CREATE OPTIMIZED JPEG
+    |--------------------------------------------------------------------------
+    */
+
+    const optimizedBuffer =
+      await sharp(
+        originalBuffer
+      )
+        /*
+        |--------------------------------------------------------------
+        | Respect EXIF orientation.
+        |--------------------------------------------------------------
+        */
+        .rotate()
+
+        /*
+        |--------------------------------------------------------------
+        | Maximum dimension: 2560px.
+        |
+        | Smaller images are NOT enlarged.
+        | Aspect ratio is preserved.
+        |--------------------------------------------------------------
+        */
+        .resize({
+          width: 2560,
+          height: 2560,
+          fit: "inside",
+          withoutEnlargement: true,
+        })
+
+        /*
+        |--------------------------------------------------------------
+        | High-quality JPEG.
+        |--------------------------------------------------------------
+        */
+        .jpeg({
+          quality: 85,
+          mozjpeg: true,
+        })
+
+        .toBuffer();
+
+    if (
+      optimizedBuffer.length === 0
+    ) {
+      throw new Error(
+        `Sharp produced an empty image: ${photo.fileName}`
+      );
+    }
+
+    const optimizedSize =
+      optimizedBuffer.length;
+
+    console.log(
+      `Optimized size: ${Math.round(
+        optimizedSize / 1024
+      )} KB`
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | SMART SIZE CHECK
+    |--------------------------------------------------------------------------
+    |
+    | IMPORTANT:
+    |
+    | If Sharp makes the file larger, keep the ORIGINAL.
+    |
+    */
+
+    if (
+      optimizedSize >=
+      originalSize
+    ) {
+      console.log(
+        "ℹ️ Optimized version is not smaller. Keeping original."
+      );
+
+      return {
+        name:
+          photo.fileName,
+
+        mimeType:
+          photo.mimeType ||
+          (
+            metadata.format === "png"
+              ? "image/png"
+              : metadata.format === "webp"
+                ? "image/webp"
+                : metadata.format === "gif"
+                  ? "image/gif"
+                  : metadata.format === "avif"
+                    ? "image/avif"
+                    : "image/jpeg"
+          ),
+
+        buffer:
+          originalBuffer,
+      };
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | OPTIMIZED VERSION IS SMALLER
+    |--------------------------------------------------------------------------
+    */
+
+    console.log(
+      `✅ Using optimized version: ${Math.round(
+        optimizedSize / 1024
+      )} KB`
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | ALWAYS GIVE iPROPERTY A JPG EXTENSION
+    |--------------------------------------------------------------------------
+    */
+
+    const baseName =
+      String(
+        photo.fileName
+      )
+        .replace(
+          /\.[^/.]+$/,
+          ""
+        );
+
+    return {
+      name:
+        `${baseName}.jpg`,
+
+      mimeType:
+        "image/jpeg",
+
+      buffer:
+        optimizedBuffer,
+    };
+
+  } catch (error) {
+
+    console.error(
+      `❌ Could not optimize ${photo.fileName}:`,
+      error
+    );
+
+    throw new Error(
+      `Unable to process image "${photo.fileName}". The file may be corrupted or in an unsupported image format.`
+    );
+  }
 }
 
 /*

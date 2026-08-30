@@ -12,10 +12,11 @@
 | 5. Property unit type
 | 6. State
 | 7. City
-| 8. Postal code
-| 9. Tenure
-| 10. Title type
-| 11. Click Next
+| 8. Township
+| 9. Postal code
+| 10. Tenure
+| 11. Title type
+| 12. Click Next
 |
 |--------------------------------------------------------------------------
 */
@@ -729,9 +730,7 @@ async function selectState(
   page,
   state
 ) {
-  if (
-    !state
-  ) {
+  if (!state) {
     throw new Error(
       "Listing is missing state."
     );
@@ -822,9 +821,7 @@ async function enterCity(
   page,
   city
 ) {
-  if (
-    !city
-  ) {
+  if (!city) {
     throw new Error(
       "Listing is missing city."
     );
@@ -956,6 +953,408 @@ async function enterCity(
 
 /*
 |--------------------------------------------------------------------------
+| TOWNSHIP
+|--------------------------------------------------------------------------
+|
+| iProperty Township is a typeahead/combobox.
+|
+| MIB stores the township value in:
+|
+| listing.area
+|
+| If listing.area exists:
+|   → type township
+|   → select matching township suggestion
+|
+| If listing.area is empty:
+|   → select "My listing is not in any township"
+|
+|--------------------------------------------------------------------------
+*/
+
+function escapeRegExp(
+  value
+) {
+  return String(
+    value
+  ).replace(
+    /[.*+?^${}()|[\]\\]/g,
+    "\\$&"
+  );
+}
+
+
+async function enterTownship(
+  page,
+  township
+) {
+  const normalizedTownship =
+    township === undefined ||
+    township === null
+      ? ""
+      : String(township).trim();
+
+  console.log("");
+
+  console.log(
+    "Township from MIB:",
+    normalizedTownship || "(none)"
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | FIND "MY LISTING IS NOT IN ANY TOWNSHIP" CHECKBOX
+  |--------------------------------------------------------------------------
+  */
+
+  const checkbox =
+    page.getByRole(
+      "checkbox",
+      {
+        name:
+          /My listing is not in any township/i,
+      }
+    ).first();
+
+  /*
+  |--------------------------------------------------------------------------
+  | NO TOWNSHIP
+  |--------------------------------------------------------------------------
+  */
+
+  if (!normalizedTownship) {
+    console.log(
+      'No township supplied. Checking "My listing is not in any township"...'
+    );
+
+    const checkboxVisible =
+      await checkbox
+        .isVisible()
+        .catch(
+          () => false
+        );
+
+    if (!checkboxVisible) {
+      throw new Error(
+        'Could not find "My listing is not in any township" checkbox.'
+      );
+    }
+
+    const checked =
+      await checkbox
+        .isChecked()
+        .catch(
+          () => false
+        );
+
+    if (!checked) {
+      console.log(
+        '🖱️ Checking "My listing is not in any township"...'
+      );
+
+      await checkbox.check();
+
+      await page.waitForTimeout(
+        500
+      );
+    }
+
+    console.log(
+      '✅ "My listing is not in any township" selected.'
+    );
+
+    return;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | TOWNSHIP EXISTS
+  |--------------------------------------------------------------------------
+  |
+  | iProperty may have "My listing is not in any township"
+  | selected by default.
+  |
+  | That disables the Township input.
+  |
+  | Therefore:
+  |
+  | 1. Find checkbox
+  | 2. If checked -> UNCHECK it
+  | 3. Wait for Township input to enable
+  |
+  |--------------------------------------------------------------------------
+  */
+
+  console.log(
+    "Selecting Township:",
+    normalizedTownship
+  );
+
+  const checkboxVisible =
+    await checkbox
+      .isVisible()
+      .catch(
+        () => false
+      );
+
+  if (checkboxVisible) {
+    const checked =
+      await checkbox
+        .isChecked()
+        .catch(
+          () => false
+        );
+
+    console.log(
+      '"My listing is not in any township" currently:',
+      checked
+        ? "CHECKED"
+        : "UNCHECKED"
+    );
+
+    if (checked) {
+      console.log(
+        '🖱️ Township exists. Unchecking "My listing is not in any township"...'
+      );
+
+      await checkbox.uncheck();
+
+      await page.waitForTimeout(
+        500
+      );
+
+      console.log(
+        '✅ "My listing is not in any township" unchecked.'
+      );
+    }
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | FIND TOWNSHIP INPUT
+  |--------------------------------------------------------------------------
+  */
+
+  const townshipInput =
+    page.locator(
+      '[da-id="township-input-dropdown"] input[role="combobox"]'
+    ).first();
+
+  /*
+  |--------------------------------------------------------------------------
+  | WAIT UNTIL TOWNSHIP INPUT IS ENABLED
+  |--------------------------------------------------------------------------
+  */
+
+  console.log(
+    "Waiting for Township input to become enabled..."
+  );
+
+  const townshipStartTime =
+    Date.now();
+
+  let townshipEnabled =
+    false;
+
+  while (
+    Date.now() -
+      townshipStartTime <
+    15000
+  ) {
+    const visible =
+      await townshipInput
+        .isVisible()
+        .catch(
+          () => false
+        );
+
+    const enabled =
+      await townshipInput
+        .isEnabled()
+        .catch(
+          () => false
+        );
+
+    if (
+      visible &&
+      enabled
+    ) {
+      townshipEnabled =
+        true;
+
+      break;
+    }
+
+    await page.waitForTimeout(
+      300
+    );
+  }
+
+  if (!townshipEnabled) {
+    throw new Error(
+      'Township input remained disabled after unchecking "My listing is not in any township".'
+    );
+  }
+
+  console.log(
+    "✅ Township input is now enabled."
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | ENTER TOWNSHIP
+  |--------------------------------------------------------------------------
+  */
+
+  await townshipInput
+    .scrollIntoViewIfNeeded();
+
+  console.log(
+    "🖱️ Clicking Township input..."
+  );
+
+  await townshipInput.click();
+
+  await page.waitForTimeout(
+    300
+  );
+
+  console.log(
+    `Typing ${normalizedTownship}...`
+  );
+
+  await townshipInput
+    .press(
+      "Control+A"
+    )
+    .catch(
+      () => {}
+    );
+
+  await townshipInput.fill(
+    normalizedTownship
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | WAIT FOR SUGGESTIONS
+  |--------------------------------------------------------------------------
+  */
+
+  await page.waitForTimeout(
+    1000
+  );
+
+  console.log(
+    `Looking for ${normalizedTownship} township suggestion...`
+  );
+
+  const escapedTownship =
+    normalizedTownship.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
+    );
+
+  const townshipSuggestion =
+    await findVisible(
+      [
+        page.getByRole(
+          "option",
+          {
+            name:
+              new RegExp(
+                `^${escapedTownship}$`,
+                "i"
+              ),
+          }
+        ),
+
+        page.locator(
+          '[role="option"]'
+        ).filter({
+          hasText:
+            new RegExp(
+              `^\\s*${escapedTownship}\\s*$`,
+              "i"
+            ),
+        }),
+
+        page.getByText(
+          normalizedTownship,
+          {
+            exact:
+              true,
+          }
+        ),
+
+        page.locator(
+          '[class*="suggestion" i]'
+        ).filter({
+          hasText:
+            new RegExp(
+              `^\\s*${escapedTownship}\\s*$`,
+              "i"
+            ),
+        }),
+      ],
+      10000
+    );
+
+  if (!townshipSuggestion) {
+    throw new Error(
+      `Could not find "${normalizedTownship}" township suggestion after typing.`
+    );
+  }
+
+  console.log(
+    `✅ ${normalizedTownship} found. Clicking ${normalizedTownship}...`
+  );
+
+  await townshipSuggestion
+    .scrollIntoViewIfNeeded();
+
+  await townshipSuggestion.click();
+
+  await page.waitForTimeout(
+    PAGE_WAIT_MS
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | VERIFY
+  |--------------------------------------------------------------------------
+  */
+
+  const selectedValue =
+    await townshipInput
+      .inputValue()
+      .catch(
+        () => ""
+      );
+
+  if (
+    selectedValue &&
+    selectedValue
+      .trim()
+      .toLowerCase() !==
+      normalizedTownship
+        .toLowerCase()
+  ) {
+    console.log(
+      "⚠ Township input value after selection:",
+      selectedValue
+    );
+  }
+
+  console.log(
+    "✅ Township selected:",
+    normalizedTownship
+  );
+}
+
+
+/*
+|--------------------------------------------------------------------------
 | POSTAL CODE
 |--------------------------------------------------------------------------
 */
@@ -1050,9 +1449,7 @@ async function selectIndividualTitle(
   page,
   titleType
 ) {
-  if (
-    !titleType
-  ) {
+  if (!titleType) {
     throw new Error(
       "Listing is missing title_type."
     );
@@ -1430,6 +1827,17 @@ export async function handleLocation(
   await enterCity(
     page,
     listing.city
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | TOWNSHIP
+  |--------------------------------------------------------------------------
+  */
+
+  await enterTownship(
+    page,
+    listing.area
   );
 
   /*
