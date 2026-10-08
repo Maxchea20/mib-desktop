@@ -1529,6 +1529,63 @@ async function selectIndividualTitle(
 
 /*
 |--------------------------------------------------------------------------
+| LAND TITLE TYPE (Industrial Land only)
+|--------------------------------------------------------------------------
+|
+| iProperty shows a required "Land title type" row under Title type for
+| land listings. Industrial Land maps to the "Industrial" button.
+|
+*/
+
+async function selectLandTitleType(
+  page,
+  landTitleType
+) {
+  console.log("");
+
+  console.log(
+    "Selecting Land title type:",
+    landTitleType
+  );
+
+  const option =
+    await findVisible(
+      [
+        page
+          .getByText(
+            "Land title type",
+            { exact: true }
+          )
+          .locator(
+            `xpath=following::button[normalize-space()="${landTitleType}"][1]`
+          ),
+      ],
+      10000
+    );
+
+  if (!option) {
+    throw new Error(
+      `Could not find "${landTitleType}" land title type.`
+    );
+  }
+
+  await option.scrollIntoViewIfNeeded();
+
+  await option.click();
+
+  await page.waitForTimeout(
+    PAGE_WAIT_MS
+  );
+
+  console.log(
+    "✅ Land title type selected:",
+    landTitleType
+  );
+}
+
+
+/*
+|--------------------------------------------------------------------------
 | CLICK NEXT
 |--------------------------------------------------------------------------
 */
@@ -1900,6 +1957,13 @@ export async function handleLocation(
     page,
     listing.title_type
   );
+
+  if (!hasUnitTypeStep(listing)) {
+    await selectLandTitleType(
+      page,
+      "Industrial"
+    );
+  }
 
   /*
   |--------------------------------------------------------------------------

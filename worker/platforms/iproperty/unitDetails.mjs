@@ -30,6 +30,39 @@
 */
 
 const PAGE_WAIT_MS = 1000;
+
+/*
+|--------------------------------------------------------------------------
+| INDUSTRIAL LAND
+|--------------------------------------------------------------------------
+|
+| Industrial Land has no bathrooms or built-up. Other optional fields
+| are attempted but never fail the job if iProperty does not show them.
+|
+*/
+
+function isIndustrialLand(listing) {
+  return (
+    String(listing.property_sub_type ?? "").trim().toLowerCase() ===
+    "industrial land"
+  );
+}
+
+async function tryOptionalStep(
+  label,
+  step
+) {
+  try {
+    await step();
+  } catch (error) {
+    console.log(
+      `Skipping ${label}: ${error.message}`
+    );
+  }
+}
+
+
+
 const ELEMENT_TIMEOUT = 15000;
 
 /*
@@ -929,65 +962,97 @@ export async function handleUnitDetails(
     |--------------------------------------------------------------------------
     */
 
-    await enterBathrooms(
-      page,
-      listing.bathrooms
-    );
+    if (isIndustrialLand(listing)) {
+      console.log(
+        "Industrial Land: skipping Bathrooms and Built-up."
+      );
 
-    /*
-    |--------------------------------------------------------------------------
-    | BUILT-UP
-    |--------------------------------------------------------------------------
-    */
+      await enterLandArea(
+        page,
+        listing.land_size
+      );
 
-    await enterBuiltUp(
-      page,
-      listing.built_up
-    );
+      if (hasValue(listing.condition)) {
+        await tryOptionalStep("Condition", () =>
+          selectIndustrialCondition(page, listing.condition)
+        );
+      }
 
-    /*
-    |--------------------------------------------------------------------------
-    | LAND AREA
-    |--------------------------------------------------------------------------
-    */
+      if (hasValue(listing.electricity_phase)) {
+        await tryOptionalStep("Electricity phase", () =>
+          selectElectricityPhase(page, listing.electricity_phase)
+        );
+      }
 
-    await enterLandArea(
-      page,
-      listing.land_size
-    );
+      if (hasValue(listing.industrial_power_supply)) {
+        await tryOptionalStep("Electricity supply", () =>
+          enterIndustrialPowerSupply(
+            page,
+            listing.industrial_power_supply
+          )
+        );
+      }
+    } else {
+      await enterBathrooms(
+        page,
+        listing.bathrooms
+      );
 
-    /*
-    |--------------------------------------------------------------------------
-    | CONDITION
-    |--------------------------------------------------------------------------
-    */
+      /*
+      |--------------------------------------------------------------------------
+      | BUILT-UP
+      |--------------------------------------------------------------------------
+      */
 
-    await selectIndustrialCondition(
-      page,
-      listing.condition
-    );
+      await enterBuiltUp(
+        page,
+        listing.built_up
+      );
 
-    /*
-    |--------------------------------------------------------------------------
-    | ELECTRICITY PHASE
-    |--------------------------------------------------------------------------
-    */
+      /*
+      |--------------------------------------------------------------------------
+      | LAND AREA
+      |--------------------------------------------------------------------------
+      */
 
-    await selectElectricityPhase(
-      page,
-      listing.electricity_phase
-    );
+      await enterLandArea(
+        page,
+        listing.land_size
+      );
 
-    /*
-    |--------------------------------------------------------------------------
-    | ELECTRICITY SUPPLY
-    |--------------------------------------------------------------------------
-    */
+      /*
+      |--------------------------------------------------------------------------
+      | CONDITION
+      |--------------------------------------------------------------------------
+      */
 
-    await enterIndustrialPowerSupply(
-      page,
-      listing.industrial_power_supply
-    );
+      await selectIndustrialCondition(
+        page,
+        listing.condition
+      );
+
+      /*
+      |--------------------------------------------------------------------------
+      | ELECTRICITY PHASE
+      |--------------------------------------------------------------------------
+      */
+
+      await selectElectricityPhase(
+        page,
+        listing.electricity_phase
+      );
+
+      /*
+      |--------------------------------------------------------------------------
+      | ELECTRICITY SUPPLY
+      |--------------------------------------------------------------------------
+      */
+
+      await enterIndustrialPowerSupply(
+        page,
+        listing.industrial_power_supply
+      );
+    }
 
     /*
     |--------------------------------------------------------------------------
