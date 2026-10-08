@@ -704,6 +704,26 @@ async function selectPropertySubType(
 
 /*
 |--------------------------------------------------------------------------
+| UNIT TYPE APPLICABILITY
+|--------------------------------------------------------------------------
+|
+| iProperty has no "Property unit type" step for Industrial Land.
+| The form goes straight from Property sub type to State.
+|
+*/
+
+function hasUnitTypeStep(listing) {
+  return !(
+    String(listing.property_type ?? "").trim().toLowerCase() ===
+      "industrial" &&
+    String(listing.property_sub_type ?? "").trim().toLowerCase() ===
+      "industrial land"
+  );
+}
+
+
+/*
+|--------------------------------------------------------------------------
 | PROPERTY UNIT TYPE
 |--------------------------------------------------------------------------
 */
@@ -1696,11 +1716,6 @@ export async function handleLocation(
     ],
 
     [
-      "unit_type",
-      listing.unit_type,
-    ],
-
-    [
       "state",
       listing.state,
     ],
@@ -1725,6 +1740,13 @@ export async function handleLocation(
       listing.title_type,
     ],
   ];
+
+  if (hasUnitTypeStep(listing)) {
+    requiredFields.push([
+      "unit_type",
+      listing.unit_type,
+    ]);
+  }
 
   for (
     const [
@@ -1802,10 +1824,16 @@ export async function handleLocation(
   |--------------------------------------------------------------------------
   */
 
-  await selectPropertyUnitType(
-    page,
-    listing.unit_type
-  );
+  if (hasUnitTypeStep(listing)) {
+    await selectPropertyUnitType(
+      page,
+      listing.unit_type
+    );
+  } else {
+    console.log(
+      "Skipping Property unit type (not applicable to Industrial Land)."
+    );
+  }
 
   /*
   |--------------------------------------------------------------------------
