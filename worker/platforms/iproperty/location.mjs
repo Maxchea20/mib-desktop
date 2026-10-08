@@ -1528,6 +1528,25 @@ async function selectIndividualTitle(
 
 
 /*
+| MIB stores land_type as "Industrial" (Industrial Land listings) or
+| "Industrial Land" / "Agriculture Land" (Land category). iProperty's
+| buttons are Residential / Commercial / Industrial / Agricultural.
+*/
+
+function getLandTitleType(listing) {
+  const value = String(listing.land_type ?? "")
+    .replace(/\s*land\s*$/i, "")
+    .trim()
+    .toLowerCase();
+
+  if (value.startsWith("agri")) return "Agricultural";
+  if (value === "residential") return "Residential";
+  if (value === "commercial") return "Commercial";
+  return "Industrial";
+}
+
+
+/*
 |--------------------------------------------------------------------------
 | LAND TITLE TYPE (Industrial Land only)
 |--------------------------------------------------------------------------
@@ -1961,7 +1980,7 @@ export async function handleLocation(
   if (!hasUnitTypeStep(listing)) {
     await selectLandTitleType(
       page,
-      "Industrial"
+      getLandTitleType(listing)
     );
   }
 
