@@ -14,6 +14,10 @@ import {
   handleIpropertyCreateListing,
 } from "./platforms/iproperty/createListing.mjs";
 
+import {
+  handleGoogleBusinessPost,
+} from "./platforms/google/post.mjs";
+
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL;
 
@@ -472,6 +476,11 @@ async function executeJob(
 
     case "iproperty_create_listing":
       return await handleIpropertyCreateListing(
+        job
+      );
+
+    case "google_business_post":
+      return await handleGoogleBusinessPost(
         job
       );
 
