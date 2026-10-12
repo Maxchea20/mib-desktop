@@ -554,7 +554,7 @@ export async function handleGoogleBusinessPost(job) {
         console.log(`Publish click method ${a + 1} failed: ${e.message}`);
         continue;
       }
-      for (let i = 0; i < 10 && !done; i++) {
+      for (let i = 0; i < 20 && !done; i++) {
         await page.waitForTimeout(1000);
         done = await publishedScreen();
       }
