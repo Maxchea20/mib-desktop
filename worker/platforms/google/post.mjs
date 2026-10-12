@@ -11,12 +11,12 @@ import { getGoogleBrowserPage } from "./browser.mjs";
 |--------------------------------------------------------------------------
 |
 | Each listing is added as a Product on the Business Profile
-| (Products > Add product), which has a photo, name, price, description
-| and a landing page URL. The URL is a wa.me link, so it opens WhatsApp.
+| (Products > Add product): photo, name, category, price and description.
+| The landing page URL is left empty; the description ends with the
+| WhatsApp number.
 |
 | Payload (built by the MIB web app):
-|   title, description (or summary), price (number), photo_url,
-|   button_url (wa.me link), dry_run
+|   title, description (or summary), price (number), photo_url, dry_run
 |
 | dry_run: fills in the whole form but does NOT publish, so you can check
 | it in the open browser window first.
@@ -187,13 +187,16 @@ async function clickForFileChooser(page, el, timeout = 6000) {
   return chooser;
 }
 
-async function setFileOnHiddenInput(page, file) {
-  for (const frame of allFrames(page)) {
-    const input = frame.locator('input[type="file"]').first();
-    if ((await input.count().catch(() => 0)) > 0) {
-      await input.setInputFiles(file);
-      return true;
-    }
+// Sets the file on the hidden <input type=file> nearest to `anchor`
+// (never a file input elsewhere on the page).
+async function setFileNear(anchor, file) {
+  const input = anchor.locator(
+    'xpath=ancestor::*[.//input[@type="file"]][1]//input[@type="file"]'
+  ).first();
+
+  if ((await input.count().catch(() => 0)) > 0) {
+    await input.setInputFiles(file);
+    return true;
   }
   return false;
 }
@@ -206,62 +209,55 @@ async function uploadPhoto(page, file) {
     console.log("✅ Photo uploaded.");
   };
 
-  // 1. "Add photo" may open the OS file picker directly...
-  const addPhoto = await findVisible(
+  // Only the "Select a photo" box inside the Add product form.
+  // (Other "Add photo" buttons on the page belong to the profile itself.)
+  const selectPhoto = await mustFind(
     page,
-    byText("Select a photo", "Add photo", "Add photos", "Add a photo", "Photo"),
-    8000
+    'the "Select a photo" box in the Add product form',
+    [
+      (f) => f.getByRole("button", { name: "Select a photo", exact: true }),
+      (f) => f.getByText("Select a photo", { exact: true }),
+    ],
+    10000
   );
 
-  if (addPhoto) {
-    const chooser = await clickForFileChooser(page, addPhoto);
-    if (chooser) {
-      await chooser.setFiles(file);
-      return done();
-    }
-    await page.waitForTimeout(1500);
+  // 1. Opens the OS file picker directly...
+  let chooser = await clickForFileChooser(page, selectPhoto);
+  if (chooser) {
+    await chooser.setFiles(file);
+    return done();
   }
+  await page.waitForTimeout(1500);
 
-  // 2. ...or a hidden <input type=file> may be on the page...
-  if (await setFileOnHiddenInput(page, file)) return done();
+  // 2. ...or a hidden file input sits inside the form...
+  if (await setFileNear(selectPhoto, file)) return done();
 
-  // 3. ...or Google's own photo dialog with an upload button inside.
+  // 3. ...or Google's own photo dialog with an upload button.
   const uploadButton = await findVisible(
     page,
-    [
-      ...byText(
-        "Upload photos",
-        "Upload photo",
-        "Upload",
-        "Select photos",
-        "Select photo",
-        "Select from computer",
-        "Browse"
-      ),
-      (f) => f.getByText(/upload|select photos?|browse|from your computer/i),
-    ],
+    byText(
+      "Upload photos",
+      "Upload photo",
+      "Upload",
+      "Select photos",
+      "Select from computer",
+      "Browse"
+    ),
     8000
   );
 
   if (uploadButton) {
-    const chooser = await clickForFileChooser(page, uploadButton, 8000);
+    chooser = await clickForFileChooser(page, uploadButton, 8000);
     if (chooser) {
       await chooser.setFiles(file);
       return done();
     }
-    if (await setFileOnHiddenInput(page, file)) return done();
   }
 
   throw new Error(
-    "Could not upload the photo: no file picker or upload button appeared after clicking Add photo."
+    'Could not upload the photo: nothing opened after clicking "Select a photo".'
   );
 }
-
-/*
-|--------------------------------------------------------------------------
-| HANDLER
-|--------------------------------------------------------------------------
-*/
 
 function shorten(text, max) {
   const clean = String(text ?? "").replace(/[ \t]+/g, " ").trim();
@@ -336,8 +332,8 @@ async function selectCategory(page) {
 export async function handleGoogleBusinessPost(job) {
   const p = job.payload ?? {};
 
-  if (!p.title || !p.button_url) {
-    throw new Error("Google Business job is missing title or button_url.");
+  if (!p.title) {
+    throw new Error("Google Business job is missing title.");
   }
 
   const name = shorten(p.title, 58);
@@ -471,7 +467,7 @@ export async function handleGoogleBusinessPost(job) {
     if (photoFile) await uploadPhoto(page, photoFile);
 
     /*
-    | NAME, CATEGORY, PRICE, DESCRIPTION, LINK
+    | NAME, CATEGORY, PRICE, DESCRIPTION (landing page URL is left empty)
     */
     await fillField(page, "Product name", field(/product name/i), name);
 
@@ -494,13 +490,6 @@ export async function handleGoogleBusinessPost(job) {
         description
       );
     }
-
-    await fillField(
-      page,
-      "Landing page URL",
-      field(/landing page|url/i),
-      p.button_url
-    );
 
     /*
     | PUBLISH (skipped in dry run)
