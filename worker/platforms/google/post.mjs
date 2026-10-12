@@ -7,18 +7,23 @@ import { getGoogleBrowserPage } from "./browser.mjs";
 
 /*
 |--------------------------------------------------------------------------
-| GOOGLE BUSINESS PROFILE POST
+| GOOGLE BUSINESS PROFILE - ADD PRODUCT
 |--------------------------------------------------------------------------
 |
+| Each listing is added as a Product on the Business Profile
+| (Products > Add product), which has a photo, name, price, description
+| and a landing page URL. The URL is a wa.me link, so it opens WhatsApp.
+|
 | Payload (built by the MIB web app):
-|   title, summary, price_text, photo_url,
-|   button_label ("Learn more"), button_url (wa.me link), dry_run
+|   title, description (or summary), price (number), photo_url,
+|   button_url (wa.me link), dry_run
 |
-| Google post buttons cannot say "WhatsApp", so the button is
-| "Learn more" linking to WhatsApp.
-|
-| dry_run: fills in the whole post but does NOT publish, so you can check
+| dry_run: fills in the whole form but does NOT publish, so you can check
 | it in the open browser window first.
+|
+| Product category is required by Google. Set GOOGLE_PRODUCT_CATEGORY in
+| .env to the category text to pick (e.g. "Real estate"); otherwise the
+| worker picks a property-like category, else the first one.
 |
 | Google changes this screen from time to time. Every step uses visible
 | text rather than CSS classes, and a screenshot is saved to
@@ -204,7 +209,7 @@ async function uploadPhoto(page, file) {
   // 1. "Add photo" may open the OS file picker directly...
   const addPhoto = await findVisible(
     page,
-    byText("Add photo", "Add photos", "Add a photo", "Photo"),
+    byText("Select a photo", "Add photo", "Add photos", "Add a photo", "Photo"),
     8000
   );
 
@@ -258,19 +263,97 @@ async function uploadPhoto(page, file) {
 |--------------------------------------------------------------------------
 */
 
+function shorten(text, max) {
+  const clean = String(text ?? "").replace(/[ \t]+/g, " ").trim();
+  return clean.length <= max ? clean : `${clean.slice(0, max - 1).trimEnd()}…`;
+}
+
+async function fillField(page, label, builders, value) {
+  const el = await mustFind(page, `the ${label} field`, builders);
+  await el.click();
+  await el.fill(String(value));
+  console.log(`✅ ${label} entered.`);
+}
+
+const field = (re) => [
+  (f) => f.getByRole("textbox", { name: re }),
+  (f) => f.getByLabel(re),
+  (f) => f.getByPlaceholder(re),
+];
+
+async function selectCategory(page) {
+  console.log("Selecting category...");
+
+  const dropdown = await mustFind(page, "the category dropdown", [
+    (f) => f.getByRole("combobox", { name: /category/i }),
+    (f) => f.getByRole("button", { name: /category/i }),
+    (f) => f.getByText(/select a category/i),
+  ]);
+  await dropdown.click();
+  await page.waitForTimeout(1000);
+
+  const options = [];
+  for (const frame of allFrames(page)) {
+    const items = frame.getByRole("option");
+    const n = await items.count().catch(() => 0);
+    for (let i = 0; i < n; i++) {
+      if (await items.nth(i).isVisible().catch(() => false)) {
+        options.push(items.nth(i));
+      }
+    }
+  }
+
+  if (options.length === 0) {
+    throw new Error("The category list did not open.");
+  }
+
+  const names = [];
+  for (const o of options) {
+    names.push((await o.innerText().catch(() => "")).trim());
+  }
+  console.log("Categories available:", names.join(" | "));
+
+  const wanted = process.env.GOOGLE_PRODUCT_CATEGORY;
+  let index = -1;
+
+  if (wanted) {
+    index = names.findIndex((n) =>
+      n.toLowerCase().includes(wanted.toLowerCase())
+    );
+  }
+  if (index === -1) {
+    index = names.findIndex((n) =>
+      /real estate|propert|house|home|land/i.test(n)
+    );
+  }
+  if (index === -1) index = 0;
+
+  console.log("Category chosen:", names[index]);
+  await options[index].click();
+  await page.waitForTimeout(800);
+}
+
 export async function handleGoogleBusinessPost(job) {
   const p = job.payload ?? {};
 
-  if (!p.summary || !p.button_url) {
-    throw new Error("Google Business job is missing summary or button_url.");
+  if (!p.title || !p.button_url) {
+    throw new Error("Google Business job is missing title or button_url.");
   }
+
+  const name = shorten(p.title, 58);
+  const description = shorten(p.description || p.summary, 1000);
+
+  const priceNumber =
+    p.price !== undefined && p.price !== null && p.price !== ""
+      ? Number(p.price)
+      : Number(String(p.price_text ?? "").replace(/[^0-9.]/g, ""));
 
   console.log("");
   console.log("=================================");
-  console.log("GOOGLE BUSINESS POST");
+  console.log("GOOGLE BUSINESS - ADD PRODUCT");
   console.log("=================================");
-  console.log("Title:", p.title);
-  console.log("Price:", p.price_text);
+  console.log("Name:", name);
+  console.log("Price:", priceNumber || "(none)");
   console.log("Dry run:", p.dry_run === true);
 
   const page = await getGoogleBrowserPage();
@@ -283,17 +366,17 @@ export async function handleGoogleBusinessPost(job) {
     */
     await ensureSignedIn(page);
 
-    const addUpdateNames = [
-      "Add update",
-      "Add an update",
-      "Add post",
-      "Add a post",
-      "Create post",
+    const addProductBuilders = [
+      (f) => f.getByRole("button", { name: /add product/i }),
+      (f) => f.getByRole("link", { name: /add product/i }),
+      (f) => f.getByLabel(/add product/i),
+      (f) => f.getByText(/^add product$/i),
+      (f) => f.getByTitle(/add product/i),
     ];
 
     // The search page only shows a "You manage this profile" card with a
-    // "View profile" button. "Add update" appears after clicking it.
-    let add = await findVisible(page, byText(...addUpdateNames), 4000);
+    // "View profile" button. The Products row appears after clicking it.
+    let add = await findVisible(page, addProductBuilders, 4000);
 
     if (!add) {
       console.log('Clicking "View profile"...');
@@ -308,14 +391,32 @@ export async function handleGoogleBusinessPost(job) {
       await page.waitForTimeout(3000);
     }
 
-    add = add ?? (await mustFind(
-      page,
-      'the "Add update" button. Check the MIB Google window to see what page it stopped on. You can also set GOOGLE_BUSINESS_URL to your profile\'s management page',
-      byText(...addUpdateNames),
-      20000
-    ));
+    // Last resort: the dashed "+" tile right under the "Products" heading.
+    add =
+      add ??
+      (await findVisible(
+        page,
+        [
+          ...addProductBuilders,
+          (f) =>
+            f
+              .getByText("Products", { exact: true })
+              .locator(
+                'xpath=following::*[self::a or self::button or @role="button"][1]'
+              ),
+        ],
+        20000
+      ));
+
+    if (!add) {
+      throw new Error(
+        'Could not find "Add product" under Products. Check the MIB Google window to see what page it stopped on. You can also set GOOGLE_BUSINESS_URL to your profile\'s page'
+      );
+    }
+
     await add.click();
     await page.waitForTimeout(2500);
+    console.log("✅ Add product form opened.");
 
     /*
     | PHOTO
@@ -323,49 +424,36 @@ export async function handleGoogleBusinessPost(job) {
     if (photoFile) await uploadPhoto(page, photoFile);
 
     /*
-    | TEXT
+    | NAME, CATEGORY, PRICE, DESCRIPTION, LINK
     */
-    console.log("Entering text...");
+    await fillField(page, "Product name", field(/product name/i), name);
 
-    const textBox = await mustFind(page, "the post text box", [
-      (f) => f.getByRole("textbox", { name: /description|text|update|post/i }),
-      (f) => f.locator("textarea"),
-      (f) => f.locator('[contenteditable="true"]'),
-      (f) => f.getByRole("textbox"),
-    ]);
+    await selectCategory(page);
 
-    await textBox.click();
-    await textBox.fill(p.summary);
-    console.log("✅ Text entered.");
+    if (Number.isFinite(priceNumber) && priceNumber > 0) {
+      await fillField(
+        page,
+        "Product price",
+        field(/product price/i),
+        priceNumber
+      );
+    }
 
-    /*
-    | BUTTON
-    */
-    console.log("Adding button:", p.button_label);
+    if (description) {
+      await fillField(
+        page,
+        "Product description",
+        field(/product description/i),
+        description
+      );
+    }
 
-    const addButton = await mustFind(
+    await fillField(
       page,
-      'the "Add a button" control',
-      byText("Add a button", "Add button", "Button (optional)", "Button")
+      "Landing page URL",
+      field(/landing page|url/i),
+      p.button_url
     );
-    await addButton.click();
-    await page.waitForTimeout(800);
-
-    const option = await mustFind(
-      page,
-      `the "${p.button_label}" button option`,
-      byText(p.button_label || "Learn more")
-    );
-    await option.click();
-    await page.waitForTimeout(800);
-
-    const link = await mustFind(page, "the button link field", [
-      (f) => f.getByRole("textbox", { name: /link|url/i }),
-      (f) => f.getByPlaceholder(/link|url|https/i),
-      (f) => f.locator('input[type="url"]'),
-    ]);
-    await link.fill(p.button_url);
-    console.log("✅ Button added.");
 
     /*
     | PUBLISH (skipped in dry run)
@@ -374,31 +462,31 @@ export async function handleGoogleBusinessPost(job) {
       const shot = await saveDebugShot(page, "dry-run");
       console.log("");
       console.log(
-        "✅ DRY RUN: post filled in but NOT published. Check the browser window."
+        "✅ DRY RUN: product filled in but NOT published. Check the browser window."
       );
 
       return {
         success: true,
-        status: "google_post_filled_not_published",
+        status: "google_product_filled_not_published",
         screenshot: shot,
       };
     }
 
     const publish = await mustFind(
       page,
-      "the Post/Publish button",
-      byText("Post", "Publish", "Share")
+      "the Publish button",
+      byText("Publish")
     );
     await publish.click();
     await page.waitForTimeout(5000);
 
     await saveDebugShot(page, "published");
 
-    console.log("✅ Google Business post published.");
+    console.log("✅ Google Business product published.");
 
     return {
       success: true,
-      status: "google_post_published",
+      status: "google_product_published",
     };
   } catch (error) {
     const shot = await saveDebugShot(page, "error");
