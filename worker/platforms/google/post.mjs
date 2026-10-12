@@ -366,7 +366,16 @@ export async function handleGoogleBusinessPost(job) {
     */
     await ensureSignedIn(page);
 
+    // On the profile page the Products row has a dashed tile whose
+    // button is just labelled "Add": <a role="button"><span>Add</span></a>.
+    // Take the first "Add" button that follows the "Products" heading.
     const addProductBuilders = [
+      (f) =>
+        f
+          .getByText("Products", { exact: true })
+          .locator(
+            'xpath=following::a[@role="button" or self::button][.//span[normalize-space()="Add"] or normalize-space()="Add"][1]'
+          ),
       (f) => f.getByRole("button", { name: /add product/i }),
       (f) => f.getByRole("link", { name: /add product/i }),
       (f) => f.getByLabel(/add product/i),
