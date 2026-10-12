@@ -513,29 +513,58 @@ export async function handleGoogleBusinessPost(job) {
       "the Publish button",
       byText("Publish")
     );
+    // The Add product form is its own page, in an iframe at
+    // .../editprofile/products/add. It is "closed" once that frame is gone.
+    const findFormFrame = () =>
+      page
+        .frames()
+        .find((f) => /products\/add/.test(f.url()) && !f.isDetached());
+
+    const hadFrame = Boolean(findFormFrame());
+
     await publish.click();
     console.log("Publish clicked. Waiting for the form to close...");
 
-    // Success = the "Add product" form goes away. If it is still open
-    // after 20s, Google rejected it (missing field, etc.).
-    const formStillOpen = async () =>
-      Boolean(
+    const formStillOpen = async () => {
+      if (hadFrame) {
+        const frame = findFormFrame();
+        if (!frame) return false;
+        const dialog = frame.locator('[role="dialog"]').first();
+        return await dialog.isVisible().catch(() => false);
+      }
+
+      // Not an iframe on this layout: fall back to the heading text.
+      return Boolean(
         await findVisible(
           page,
           [(f) => f.getByText("Add product", { exact: true })],
           700
         )
       );
+    };
 
     let closed = false;
-    for (let i = 0; i < 20 && !closed; i++) {
+    for (let i = 0; i < 25 && !closed; i++) {
       await page.waitForTimeout(1000);
       closed = !(await formStillOpen());
     }
 
     if (!closed) {
+      // Show what the form says (validation errors etc.) in the log.
+      let formText = "";
+      try {
+        const frame = findFormFrame();
+        formText = frame
+          ? await frame.locator("body").innerText({ timeout: 3000 })
+          : "";
+      } catch {}
+
+      console.log("");
+      console.log("Add product form text after Publish:");
+      console.log(shorten(formText.replace(/\s+/g, " "), 800));
+
       throw new Error(
-        "Clicked Publish but the Add product form is still open. Google may have rejected it; check the screenshot."
+        "Clicked Publish but the Add product form is still open. Google may have rejected it (see the form text in the log); check the screenshot."
       );
     }
 
