@@ -283,12 +283,37 @@ export async function handleGoogleBusinessPost(job) {
     */
     await ensureSignedIn(page);
 
-    const add = await mustFind(
+    const addUpdateNames = [
+      "Add update",
+      "Add an update",
+      "Add post",
+      "Add a post",
+      "Create post",
+    ];
+
+    // The search page only shows a "You manage this profile" card with a
+    // "View profile" button. "Add update" appears after clicking it.
+    let add = await findVisible(page, byText(...addUpdateNames), 4000);
+
+    if (!add) {
+      console.log('Clicking "View profile"...');
+
+      const viewProfile = await mustFind(
+        page,
+        'the "View profile" button. Make sure this Google account manages your Business Profile',
+        byText("View profile", "Manage profile", "Manage this profile"),
+        15000
+      );
+      await viewProfile.click();
+      await page.waitForTimeout(3000);
+    }
+
+    add = add ?? (await mustFind(
       page,
-      'the "Add update" button. Make sure this Google account manages your Business Profile and set GOOGLE_BUSINESS_URL to your profile\'s management page',
-      byText("Add update", "Add an update", "Add post", "Add a post", "Create post"),
+      'the "Add update" button. Check the MIB Google window to see what page it stopped on. You can also set GOOGLE_BUSINESS_URL to your profile\'s management page',
+      byText(...addUpdateNames),
       20000
-    );
+    ));
     await add.click();
     await page.waitForTimeout(2500);
 
