@@ -172,9 +172,36 @@ async function downloadPhoto(url) {
   return file;
 }
 
+// Clicks `el` and returns the file chooser if one opens (null otherwise).
+// Never throws, so a missing chooser cannot crash the worker.
+async function clickForFileChooser(page, el, timeout = 6000) {
+  const [chooser] = await Promise.all([
+    page.waitForEvent("filechooser", { timeout }).catch(() => null),
+    el.click().catch(() => {}),
+  ]);
+  return chooser;
+}
+
+async function setFileOnHiddenInput(page, file) {
+  for (const frame of allFrames(page)) {
+    const input = frame.locator('input[type="file"]').first();
+    if ((await input.count().catch(() => 0)) > 0) {
+      await input.setInputFiles(file);
+      return true;
+    }
+  }
+  return false;
+}
+
 async function uploadPhoto(page, file) {
   console.log("Uploading photo...");
 
+  const done = async () => {
+    await page.waitForTimeout(5000);
+    console.log("✅ Photo uploaded.");
+  };
+
+  // 1. "Add photo" may open the OS file picker directly...
   const addPhoto = await findVisible(
     page,
     byText("Add photo", "Add photos", "Add a photo", "Photo"),
@@ -182,32 +209,47 @@ async function uploadPhoto(page, file) {
   );
 
   if (addPhoto) {
-    try {
-      const chooserPromise = page.waitForEvent("filechooser", {
-        timeout: 8000,
-      });
-      await addPhoto.click();
-      const chooser = await chooserPromise;
+    const chooser = await clickForFileChooser(page, addPhoto);
+    if (chooser) {
       await chooser.setFiles(file);
-      await page.waitForTimeout(5000);
-      console.log("✅ Photo uploaded.");
-      return;
-    } catch {
-      // fall through to the hidden file input
+      return done();
     }
+    await page.waitForTimeout(1500);
   }
 
-  for (const frame of allFrames(page)) {
-    const input = frame.locator('input[type="file"]').first();
-    if ((await input.count().catch(() => 0)) > 0) {
-      await input.setInputFiles(file);
-      await page.waitForTimeout(5000);
-      console.log("✅ Photo uploaded.");
-      return;
+  // 2. ...or a hidden <input type=file> may be on the page...
+  if (await setFileOnHiddenInput(page, file)) return done();
+
+  // 3. ...or Google's own photo dialog with an upload button inside.
+  const uploadButton = await findVisible(
+    page,
+    [
+      ...byText(
+        "Upload photos",
+        "Upload photo",
+        "Upload",
+        "Select photos",
+        "Select photo",
+        "Select from computer",
+        "Browse"
+      ),
+      (f) => f.getByText(/upload|select photos?|browse|from your computer/i),
+    ],
+    8000
+  );
+
+  if (uploadButton) {
+    const chooser = await clickForFileChooser(page, uploadButton, 8000);
+    if (chooser) {
+      await chooser.setFiles(file);
+      return done();
     }
+    if (await setFileOnHiddenInput(page, file)) return done();
   }
 
-  throw new Error("Could not find the photo upload control.");
+  throw new Error(
+    "Could not upload the photo: no file picker or upload button appeared after clicking Add photo."
+  );
 }
 
 /*
