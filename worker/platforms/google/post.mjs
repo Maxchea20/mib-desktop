@@ -514,8 +514,32 @@ export async function handleGoogleBusinessPost(job) {
       byText("Publish")
     );
     await publish.click();
-    await page.waitForTimeout(5000);
+    console.log("Publish clicked. Waiting for the form to close...");
 
+    // Success = the "Add product" form goes away. If it is still open
+    // after 20s, Google rejected it (missing field, etc.).
+    const formStillOpen = async () =>
+      Boolean(
+        await findVisible(
+          page,
+          [(f) => f.getByText("Add product", { exact: true })],
+          700
+        )
+      );
+
+    let closed = false;
+    for (let i = 0; i < 20 && !closed; i++) {
+      await page.waitForTimeout(1000);
+      closed = !(await formStillOpen());
+    }
+
+    if (!closed) {
+      throw new Error(
+        "Clicked Publish but the Add product form is still open. Google may have rejected it; check the screenshot."
+      );
+    }
+
+    await page.waitForTimeout(2000);
     await saveDebugShot(page, "published");
 
     console.log("✅ Google Business product published.");
