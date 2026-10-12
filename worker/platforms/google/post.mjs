@@ -513,44 +513,54 @@ export async function handleGoogleBusinessPost(job) {
       "the Publish button",
       byText("Publish")
     );
-    // The Add product form is its own page, in an iframe at
-    // .../editprofile/products/add. It is "closed" once that frame is gone.
+
     const findFormFrame = () =>
       page
         .frames()
         .find((f) => /products\/add/.test(f.url()) && !f.isDetached());
 
-    const hadFrame = Boolean(findFormFrame());
-
-    await publish.click();
-    console.log("Publish clicked. Waiting for the form to close...");
-
-    const formStillOpen = async () => {
-      if (hadFrame) {
-        const frame = findFormFrame();
-        if (!frame) return false;
-        const dialog = frame.locator('[role="dialog"]').first();
-        return await dialog.isVisible().catch(() => false);
+    // Success screen: "Your product is being added".
+    const publishedScreen = async () => {
+      for (const f of page.frames()) {
+        try {
+          const n = await f
+            .getByText(/product is being added|Add next product|See my products/i)
+            .count();
+          if (n > 0) return true;
+        } catch {}
       }
-
-      // Not an iframe on this layout: fall back to the heading text.
-      return Boolean(
-        await findVisible(
-          page,
-          [(f) => f.getByText("Add product", { exact: true })],
-          700
-        )
-      );
+      return false;
     };
 
-    let closed = false;
-    for (let i = 0; i < 25 && !closed; i++) {
-      await page.waitForTimeout(1000);
-      closed = !(await formStillOpen());
+    const attempts = [
+      async () => {
+        await publish.scrollIntoViewIfNeeded().catch(() => {});
+        await publish.click({ timeout: 5000 });
+      },
+      async () => publish.click({ force: true, timeout: 5000 }),
+      async () => {
+        await publish.focus().catch(() => {});
+        await page.keyboard.press("Enter");
+      },
+      async () => publish.evaluate((el) => el.click()),
+    ];
+
+    let done = false;
+    for (let a = 0; a < attempts.length && !done; a++) {
+      try {
+        await attempts[a]();
+        console.log(`Publish clicked (method ${a + 1}). Waiting...`);
+      } catch (e) {
+        console.log(`Publish click method ${a + 1} failed: ${e.message}`);
+        continue;
+      }
+      for (let i = 0; i < 10 && !done; i++) {
+        await page.waitForTimeout(1000);
+        done = await publishedScreen();
+      }
     }
 
-    if (!closed) {
-      // Show what the form says (validation errors etc.) in the log.
+    if (!done) {
       let formText = "";
       try {
         const frame = findFormFrame();
@@ -564,7 +574,7 @@ export async function handleGoogleBusinessPost(job) {
       console.log(shorten(formText.replace(/\s+/g, " "), 800));
 
       throw new Error(
-        "Clicked Publish but the Add product form is still open. Google may have rejected it (see the form text in the log); check the screenshot."
+        "Clicked Publish but never saw the 'Your product is being added' screen. Check the log text and screenshot."
       );
     }
 
