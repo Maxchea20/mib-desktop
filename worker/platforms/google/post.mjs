@@ -356,7 +356,7 @@ export async function handleGoogleBusinessPost(job) {
   console.log("Price:", priceNumber || "(none)");
   console.log("Dry run:", p.dry_run === true);
 
-  const page = await getGoogleBrowserPage();
+  let page = await getGoogleBrowserPage();
 
   try {
     const photoFile = await downloadPhoto(p.photo_url);
@@ -388,7 +388,22 @@ export async function handleGoogleBusinessPost(job) {
         15000
       );
       await viewProfile.click();
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(4000);
+
+      // "View profile" can open the profile in a new tab: follow it.
+      const tabs = page.context().pages();
+      const newest = tabs[tabs.length - 1];
+      if (newest && newest !== page) {
+        console.log("Profile opened in a new tab; switching to it.");
+        page = newest;
+        await page.bringToFront();
+        await page.waitForLoadState("domcontentloaded").catch(() => {});
+      }
+
+      // Let lazy-loaded panels (Products row) render.
+      await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+      await page.mouse.wheel(0, 600).catch(() => {});
+      await page.waitForTimeout(1500);
     }
 
     // Last resort: the dashed "+" tile right under the "Products" heading.
@@ -409,6 +424,29 @@ export async function handleGoogleBusinessPost(job) {
       ));
 
     if (!add) {
+      console.log("");
+      console.log("Page:", page.url());
+      console.log('Buttons/links containing "add" or "+" on the page:');
+      for (const frame of allFrames(page)) {
+        const items = frame.locator(
+          'button, a, [role="button"], [aria-label]'
+        );
+        const n = Math.min(await items.count().catch(() => 0), 400);
+        for (let i = 0; i < n; i++) {
+          const el = items.nth(i);
+          const label = (
+            (await el.getAttribute("aria-label").catch(() => "")) ||
+            (await el.innerText().catch(() => "")) ||
+            ""
+          )
+            .replace(/\s+/g, " ")
+            .trim();
+          if (label && label.length < 80 && /add|\+|product/i.test(label)) {
+            console.log("  -", label);
+          }
+        }
+      }
+
       throw new Error(
         'Could not find "Add product" under Products. Check the MIB Google window to see what page it stopped on. You can also set GOOGLE_BUSINESS_URL to your profile\'s page'
       );
