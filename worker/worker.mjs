@@ -159,7 +159,7 @@ function logAuthProblem(label, error) {
 
 async function registerWorker() {
   const session =
-    await authenticate();
+    await ensureFreshSession();
 
   const userId =
     session.user.id;
