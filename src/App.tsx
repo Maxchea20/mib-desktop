@@ -49,32 +49,72 @@ function App() {
   const [workerProcessStatus, setWorkerProcessStatus] =
     useState("Starting worker...");
 
+  // null = checking, false = must sign in, true = signed in
+  const [loggedIn, setLoggedIn] =
+    useState<boolean | null>(null);
+
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loginBusy, setLoginBusy] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      const session = data.session;
+      setLoggedIn(Boolean(session && !session.user.is_anonymous));
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if (event === "SIGNED_OUT") {
+          setLoggedIn(false);
+          invoke<string>("stop_worker").catch(() => {});
+        } else if (session && !session.user.is_anonymous) {
+          setLoggedIn(true);
+        }
+      }
+    );
+
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setLoginBusy(true);
+    setLoginError("");
+
+    const { error: signInError } =
+      await supabase.auth.signInWithPassword({
+        email: loginEmail.trim(),
+        password: loginPassword,
+      });
+
+    setLoginBusy(false);
+
+    if (signInError) {
+      setLoginError(signInError.message);
+      return;
+    }
+
+    setLoginPassword("");
+    setLoggedIn(true);
+  }
+
+  /*
+  | MIB Desktop signs in as the MIB owner (real account, same as the
+  | web app). Anonymous sessions are no longer accepted: the database
+  | only allows the real account to read or write CRM data.
+  */
   async function getSession() {
     const {
       data: { session },
     } = await supabase.auth.getSession();
 
-    if (session) {
-      return session;
+    if (!session || session.user.is_anonymous) {
+      throw new Error("Not signed in.");
     }
 
-    const {
-      data,
-      error: signInError,
-    } =
-      await supabase.auth.signInAnonymously();
-
-    if (signInError) {
-      throw signInError;
-    }
-
-    if (!data.session) {
-      throw new Error(
-        "Unable to authenticate MIB Desktop."
-      );
-    }
-
-    return data.session;
+    return session;
   }
 
   // Used by the watchdog below.
@@ -355,6 +395,10 @@ function App() {
   }
 
   useEffect(() => {
+    if (loggedIn !== true) {
+      return;
+    }
+
     let timer:
       | ReturnType<typeof setInterval>
       | null = null;
@@ -454,7 +498,84 @@ function App() {
         clearInterval(timer);
       }
     };
-  }, []);
+  }, [loggedIn]);
+
+  if (loggedIn !== true) {
+    return (
+      <main
+        style={{
+          minHeight: "100vh",
+          background: "#0f172a",
+          color: "white",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "Arial, Helvetica, sans-serif",
+          padding: "40px",
+        }}
+      >
+        <form
+          onSubmit={handleLogin}
+          style={{
+            width: "100%",
+            maxWidth: "420px",
+            background: "#1e293b",
+            borderRadius: "16px",
+            padding: "32px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "14px",
+          }}
+        >
+          <h1 style={{ fontSize: "28px", fontWeight: 700, margin: 0 }}>
+            MIB Desktop
+          </h1>
+
+          <p style={{ color: "#94a3b8", margin: 0 }}>
+            {loggedIn === null
+              ? "Checking login..."
+              : "Sign in with your MIB account to start the background worker."}
+          </p>
+
+          {loggedIn === false && (
+            <>
+              <input
+                type="email"
+                placeholder="Email"
+                autoComplete="username"
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                required
+                style={{ padding: "12px", borderRadius: "8px", border: "1px solid #334155", background: "#0f172a", color: "white" }}
+              />
+
+              <input
+                type="password"
+                placeholder="Password"
+                autoComplete="current-password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                required
+                style={{ padding: "12px", borderRadius: "8px", border: "1px solid #334155", background: "#0f172a", color: "white" }}
+              />
+
+              {loginError && (
+                <p style={{ color: "#f87171", margin: 0 }}>{loginError}</p>
+              )}
+
+              <button
+                type="submit"
+                disabled={loginBusy}
+                style={{ padding: "12px", borderRadius: "8px", border: "none", background: "#2563eb", color: "white", fontWeight: 600, cursor: "pointer" }}
+              >
+                {loginBusy ? "Signing in..." : "Sign in"}
+              </button>
+            </>
+          )}
+        </form>
+      </main>
+    );
+  }
 
   const isOnline =
     worker?.status === "online";
