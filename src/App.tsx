@@ -627,6 +627,23 @@ function App() {
           MIB Desktop
         </h1>
 
+        <button
+          onClick={() => supabase.auth.signOut()}
+          style={{
+            position: "absolute",
+            top: "16px",
+            right: "16px",
+            padding: "8px 14px",
+            borderRadius: "8px",
+            border: "1px solid #475569",
+            background: "transparent",
+            color: "#cbd5e1",
+            cursor: "pointer",
+          }}
+        >
+          Log out
+        </button>
+
         <p
           style={{
             color: "#94a3b8",
