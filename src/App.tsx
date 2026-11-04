@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { supabase } from "./lib/supabase";
 
@@ -75,6 +75,40 @@ function App() {
     }
 
     return data.session;
+  }
+
+  // Used by the watchdog below.
+  const currentJobRef = useRef<JobRecord | null>(null);
+  const lastRestartRef = useRef(0);
+
+  useEffect(() => {
+    currentJobRef.current = currentJob;
+  }, [currentJob]);
+
+  /*
+  | The worker stops itself when its login can no longer be refreshed
+  | (it never runs jobs without a valid session). This restarts it with
+  | the app's current session: when the worker stops sending heartbeats,
+  | and after the app refreshes its own token (only when no job is running).
+  */
+  async function restartWorker(reason: string) {
+    const now = Date.now();
+
+    if (now - lastRestartRef.current < 60000) {
+      return;
+    }
+
+    lastRestartRef.current = now;
+
+    console.log("Restarting worker:", reason);
+
+    try {
+      await invoke<string>("stop_worker");
+    } catch (err) {
+      console.error("Worker stop error:", err);
+    }
+
+    await startNodeWorker();
   }
 
   async function startNodeWorker() {
@@ -374,6 +408,22 @@ function App() {
           return;
         }
 
+        const lastSeenMs =
+          currentWorker.last_seen
+            ? new Date(
+                currentWorker.last_seen
+              ).getTime()
+            : 0;
+
+        if (
+          Date.now() - lastSeenMs > 90000 &&
+          !currentJobRef.current
+        ) {
+          await restartWorker(
+            "no heartbeat for 90 seconds"
+          );
+        }
+
         await loadStatistics(
           currentWorker.id
         );
@@ -381,8 +431,24 @@ function App() {
       3000
     );
 
+    const { data: authListener } =
+      supabase.auth.onAuthStateChange(
+        (event) => {
+          if (
+            event === "TOKEN_REFRESHED" &&
+            !currentJobRef.current
+          ) {
+            restartWorker(
+              "app session refreshed"
+            );
+          }
+        }
+      );
+
     return () => {
       stopped = true;
+
+      authListener.subscription.unsubscribe();
 
       if (timer) {
         clearInterval(timer);

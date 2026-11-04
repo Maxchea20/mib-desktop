@@ -18,6 +18,10 @@ import {
   handleGoogleBusinessPost,
 } from "./platforms/google/post.mjs";
 
+import {
+  createAuthManager,
+} from "./auth.mjs";
+
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL;
 
@@ -56,10 +60,28 @@ if (
   process.exit(1);
 }
 
+/*
+|--------------------------------------------------------------------------
+| SUPABASE CLIENT (WORKER)
+|--------------------------------------------------------------------------
+|
+| Session handling is done only by ./auth.mjs (one refresh at a time,
+| fatal errors stop the worker). The client's own auto-refresh is off so
+| it cannot race with it.
+|
+*/
+
 const supabase =
   createClient(
     SUPABASE_URL,
-    SUPABASE_ANON_KEY
+    SUPABASE_ANON_KEY,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+        detectSessionInUrl: false,
+      },
+    }
   );
 
 const WORKER_NAME =
@@ -69,39 +91,70 @@ let workerId = null;
 
 let currentJobId = null;
 
-async function authenticate() {
-  console.log(
-    "Authenticating worker using MIB Desktop session..."
-  );
+let heartbeatTimer = null;
 
-  const {
-    data,
-    error,
-  } =
-    await supabase.auth.setSession({
-      access_token:
-        ACCESS_TOKEN,
+let pollTimer = null;
 
-      refresh_token:
-        REFRESH_TOKEN,
-    });
+let exitWhenIdle = false;
 
-  if (error) {
-    throw error;
+function stopTimers() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
   }
 
-  if (!data.session) {
-    throw new Error(
-      "Unable to establish worker session."
-    );
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function shutdownAfterAuthFailure() {
+  stopTimers();
+
+  if (currentJobId) {
+    // Let the running job finish; exit afterwards (see checkForJobs).
+    exitWhenIdle = true;
+    return;
   }
 
-  console.log(
-    "Worker authenticated as:",
-    data.session.user.id
-  );
+  process.exit(2);
+}
 
-  return data.session;
+const auth =
+  createAuthManager({
+    supabase,
+    accessToken: ACCESS_TOKEN,
+    refreshToken: REFRESH_TOKEN,
+    onFatal: shutdownAfterAuthFailure,
+  });
+
+const ensureFreshSession =
+  auth.ensureFreshSession;
+
+// Log the same transient auth problem at most once a minute.
+const lastAuthLog = new Map();
+
+function logAuthProblem(label, error) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : String(error);
+
+  if (error?.name === "AuthFatalError") {
+    return; // already reported once by auth.mjs
+  }
+
+  const key = `${label}:${message}`;
+  const last = lastAuthLog.get(key) || 0;
+
+  if (Date.now() - last < 60000) {
+    return;
+  }
+
+  lastAuthLog.set(key, Date.now());
+
+  console.error(`${label}:`, message);
 }
 
 async function registerWorker() {
@@ -166,7 +219,17 @@ async function registerWorker() {
 }
 
 async function heartbeat() {
-  if (!workerId) {
+  if (!workerId || auth.isFatal()) {
+    return;
+  }
+
+  try {
+    await ensureFreshSession();
+  } catch (authError) {
+    logAuthProblem(
+      "Heartbeat authentication error",
+      authError
+    );
     return;
   }
 
@@ -474,10 +537,34 @@ async function executeJob(
         job
       );
 
-    case "iproperty_create_listing":
+    case "iproperty_create_listing": {
+      const session =
+        await ensureFreshSession();
+
       return await handleIpropertyCreateListing(
-        job
+        job,
+        session.access_token
       );
+    }
+
+    case "generate_property_video": {
+      const session =
+        await ensureFreshSession();
+
+      // Loaded on demand so the worker still starts when the optional
+      // video module is not installed on this machine.
+      const {
+        handleGeneratePropertyVideo,
+      } = await import(
+        "./handlers/videoGeneration.mjs"
+      );
+
+      return await handleGeneratePropertyVideo(
+        job,
+        session.access_token,
+        supabase
+      );
+    }
 
     case "google_business_post":
       return await handleGoogleBusinessPost(
@@ -492,11 +579,22 @@ async function executeJob(
 }
 
 async function checkForJobs() {
-  if (!workerId) {
+  if (!workerId || auth.isFatal()) {
     return;
   }
 
   if (currentJobId) {
+    return;
+  }
+
+  // No valid session -> no job is claimed or run.
+  try {
+    await ensureFreshSession();
+  } catch (authError) {
+    logAuthProblem(
+      "Job polling authentication error",
+      authError
+    );
     return;
   }
 
@@ -596,6 +694,10 @@ async function checkForJobs() {
   } finally {
     currentJobId =
       null;
+
+    if (exitWhenIdle) {
+      process.exit(2);
+    }
   }
 }
 
@@ -634,15 +736,17 @@ async function startWorker() {
 
     await heartbeat();
 
-    setInterval(
-      heartbeat,
-      30000
-    );
+    heartbeatTimer =
+      setInterval(
+        heartbeat,
+        30000
+      );
 
-    setInterval(
-      checkForJobs,
-      5000
-    );
+    pollTimer =
+      setInterval(
+        checkForJobs,
+        5000
+      );
 
     await checkForJobs();
   } catch (error) {
