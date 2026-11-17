@@ -910,7 +910,7 @@ async function enterCity(
           {
             name:
               new RegExp(
-                `^${city}$`,
+                `^${escapeRegExp(city)}$`,
                 "i"
               ),
           }
@@ -928,7 +928,7 @@ async function enterCity(
         ).filter({
           hasText:
             new RegExp(
-              city,
+              escapeRegExp(city),
               "i"
             ),
         }),
@@ -938,7 +938,7 @@ async function enterCity(
         ).filter({
           hasText:
             new RegExp(
-              city,
+              escapeRegExp(city),
               "i"
             ),
         }),
@@ -1321,9 +1321,41 @@ async function enterTownship(
     );
 
   if (!townshipSuggestion) {
-    throw new Error(
-      `Could not find "${normalizedTownship}" township suggestion after typing.`
+    /*
+    | The township is not on iProperty (MIB has its own list). Do not
+    | fail the whole job: clear the box and tick
+    | "My listing is not in any township" instead.
+    */
+    console.log(
+      `⚠ "${normalizedTownship}" is not on iProperty. Using "My listing is not in any township".`
     );
+
+    await townshipInput
+      .fill("")
+      .catch(() => {});
+
+    const fallbackVisible =
+      await checkbox
+        .isVisible()
+        .catch(() => false);
+
+    if (!fallbackVisible) {
+      throw new Error(
+        `Could not find "${normalizedTownship}" township suggestion, and the "My listing is not in any township" checkbox was not found.`
+      );
+    }
+
+    await checkbox.check();
+
+    await page.waitForTimeout(
+      500
+    );
+
+    console.log(
+      '✅ "My listing is not in any township" ticked.'
+    );
+
+    return;
   }
 
   console.log(
@@ -1660,8 +1692,50 @@ async function clickNext(
     2000
   );
 
+  /*
+  | Make sure iProperty really moved on. If the Location page is still
+  | showing, a required field was rejected: report what iProperty says.
+  */
+  const stillOnLocation =
+    await page
+      .locator(
+        'input[placeholder="Search by property name"], input[placeholder="Enter postal code"]'
+      )
+      .first()
+      .waitFor({
+        state: "hidden",
+        timeout: 8000,
+      })
+      .then(() => false)
+      .catch(() => true);
+
+  if (stillOnLocation) {
+    const messages =
+      await page
+        .locator(
+          '[role="alert"], [class*="error" i], [class*="invalid" i]'
+        )
+        .allInnerTexts()
+        .catch(() => []);
+
+    const detail =
+      messages
+        .map((m) => m.trim())
+        .filter(Boolean)
+        .slice(0, 5)
+        .join(" | ");
+
+    throw new Error(
+      `iProperty did not move past the Location page after Next.${
+        detail
+          ? ` Page says: ${detail}`
+          : " Check that every required field is filled."
+      }`
+    );
+  }
+
   console.log(
-    "✅ Next clicked."
+    "✅ Next clicked. Location page completed."
   );
 }
 
