@@ -3,6 +3,10 @@ import {
 } from "./browser.mjs";
 
 import {
+  ensureIpropertySession,
+} from "./login.mjs";
+
+import {
   handleListingType,
 } from "./listingType.mjs";
 
@@ -85,103 +89,6 @@ async function findVisible(
   }
 
   return null;
-}
-
-/*
-|--------------------------------------------------------------------------
-| WAIT FOR IPROPERTY SESSION
-|--------------------------------------------------------------------------
-*/
-
-async function waitForIpropertySession(
-  page
-) {
-  console.log(
-    "Checking iProperty PRO session..."
-  );
-
-  const startTime =
-    Date.now();
-
-  const timeout =
-    60000;
-
-  while (
-    Date.now() - startTime <
-    timeout
-  ) {
-    /*
-    |--------------------------------------------------------------------------
-    | Dashboard indicators
-    |--------------------------------------------------------------------------
-    */
-
-    const dashboard =
-      await findVisible([
-        page.getByText(
-          "Dashboard",
-          {
-            exact: true,
-          }
-        ),
-
-        page.getByText(
-          "My Listings",
-          {
-            exact: true,
-          }
-        ),
-
-        page.getByText(
-          "Create Listing",
-          {
-            exact: true,
-          }
-        ),
-      ]);
-
-    if (dashboard) {
-      console.log(
-        "✅ iProperty PRO session appears active."
-      );
-
-      return true;
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Login indicators
-    |--------------------------------------------------------------------------
-    */
-
-    const login =
-      await findVisible([
-        page.getByText(
-          /log in|login|sign in/i
-        ),
-
-        page.getByRole(
-          "button",
-          {
-            name: /log in|login|sign in/i,
-          }
-        ),
-      ]);
-
-    if (login) {
-      throw new Error(
-        "iProperty PRO requires login. Please log in manually in the MIB Desktop browser session."
-      );
-    }
-
-    await page.waitForTimeout(
-      1000
-    );
-  }
-
-  throw new Error(
-    "Timed out waiting for iProperty PRO session."
-  );
 }
 
 /*
@@ -389,7 +296,7 @@ export async function handleIpropertyCreateListing(
   |--------------------------------------------------------------------------
   */
 
-  await waitForIpropertySession(
+  await ensureIpropertySession(
     page
   );
 
