@@ -241,12 +241,7 @@ async function getListingPhotos(
 
   const photos =
     objects
-      .filter(
-        (object) =>
-          object &&
-          object.name &&
-          !object.name.endsWith("/")
-      )
+      .filter(isGalleryImage)
       .map(
         (object) => {
           /*
@@ -776,6 +771,45 @@ async function uploadPhotos(
   );
 
   return expectedPhotoCount;
+}
+
+/*
+|--------------------------------------------------------------------------
+| IS GALLERY IMAGE
+|--------------------------------------------------------------------------
+|
+| Supabase lists sub-folders next to files. MIB keeps a "thumb" folder
+| with small copies of every photo, so "thumb" comes back as an entry.
+| Only real image files are gallery photos: folders (no id, no file
+| extension) and non-image files are skipped.
+|
+*/
+
+const IMAGE_EXTENSION =
+  /\.(jpe?g|png|webp|gif|avif)$/i;
+
+export function isGalleryImage(
+  object
+) {
+  if (
+    !object ||
+    !object.name
+  ) {
+    return false;
+  }
+
+  const name =
+    String(object.name);
+
+  // Folder entries have a null id and no file extension.
+  if (
+    name.endsWith("/") ||
+    object.id === null
+  ) {
+    return false;
+  }
+
+  return IMAGE_EXTENSION.test(name);
 }
 
 /*
