@@ -1,3 +1,4 @@
+import { pollDelayMs } from "./polling.mjs";
 import "dotenv/config";
 
 import { createClient } from "@supabase/supabase-js";
@@ -95,6 +96,9 @@ let heartbeatTimer = null;
 
 let pollTimer = null;
 
+// When the worker last started or finished a job. Polling is fast near this time, slower when quiet.
+let lastActivityAt = Date.now();
+
 let exitWhenIdle = false;
 
 function stopTimers() {
@@ -104,7 +108,7 @@ function stopTimers() {
   }
 
   if (pollTimer) {
-    clearInterval(pollTimer);
+    clearTimeout(pollTimer);
     pollTimer = null;
   }
 }
@@ -629,6 +633,8 @@ async function checkForJobs() {
   const job =
     data[0];
 
+  lastActivityAt = Date.now();
+
   currentJobId =
     job.id;
 
@@ -695,6 +701,8 @@ async function checkForJobs() {
     currentJobId =
       null;
 
+    lastActivityAt = Date.now();
+
     if (exitWhenIdle) {
       process.exit(2);
     }
@@ -742,12 +750,21 @@ async function startWorker() {
         30000
       );
 
-    pollTimer =
-      setInterval(
-        checkForJobs,
-        5000
-      );
+    // One check at a time, then wait (5 s while busy, 15 s when quiet).
+    const schedulePoll = () => {
+      pollTimer = setTimeout(async () => {
+        try {
+          await checkForJobs();
+        } catch (pollError) {
+          console.error("Job polling error:", pollError instanceof Error ? pollError.message : pollError);
+        } finally {
+          // stopTimers() sets pollTimer to null: then no further check is scheduled.
+          if (pollTimer !== null) schedulePoll();
+        }
+      }, pollDelayMs(Date.now(), lastActivityAt));
+    };
 
+    schedulePoll();
     await checkForJobs();
   } catch (error) {
     console.error("");
