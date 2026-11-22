@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { toDataUri, cleanScript, estimateSeconds, voiceChoice, createAvatar, speak, makeAvatarVideo, cloneVoice, PRESET_VOICES, MAX_SCRIPT_CHARS } from "./avatarVideo.mjs";
+import { toDataUri, cleanScript, estimateSeconds, voiceChoice, createAvatar, speak, makeAvatarVideo, cloneVoice, cleanVoicePrompt, previewVoice, designVoice, PRESET_VOICES, MAX_SCRIPT_CHARS } from "./avatarVideo.mjs";
 
 const fast = { pollMs: 1, sleep: async () => {} };
 
@@ -15,6 +15,7 @@ function fakeClient({ avatarStates = ["PROCESSING", "READY"], voiceStates = ["RE
     },
     voices: {
       create: async (body) => { calls.voiceCreate.push(body); return { id: "vc1" }; },
+      preview: async (body) => { calls.voicePreview = body; return { url: "https://a.example/p.mp3", durationSecs: 6 }; },
       retrieve: async () => ({ status: vs.shift() ?? "READY" }),
     },
     avatarVideos: {
@@ -82,4 +83,21 @@ test("cloning your own voice from a recording", async () => {
   const c = fakeClient();
   const id = await cloneVoice({ client: c, audioDataUri: "data:audio/mpeg;base64,AA==", name: "Max", ...fast });
   assert.equal(id, "vc1"); assert.deepEqual(c.calls.voiceCreate[0].from, { type: "audio", audio: "data:audio/mpeg;base64,AA==" });
+});
+
+test("describing a voice: needs a real description", () => {
+  assert.throws(() => cleanVoicePrompt("man"), /at least 20/);
+  assert.throws(() => cleanVoicePrompt("x".repeat(1001)), /too long/);
+  assert.equal(cleanVoicePrompt("  A warm   Malaysian Chinese man speaking English  "), "A warm Malaysian Chinese man speaking English");
+});
+
+test("hear a described voice first, then make it", async () => {
+  const c = fakeClient();
+  const p = await previewVoice({ client: c, prompt: "A warm, calm Malaysian Chinese man speaking English" });
+  assert.equal(p.url, "https://a.example/p.mp3"); assert.equal(c.calls.voicePreview.model, "eleven_ttv_v3");
+  const id = await designVoice({ client: c, prompt: "A warm, calm Malaysian Chinese man speaking English", name: "Max", ...fast });
+  assert.equal(id, "vc1");
+  assert.deepEqual(c.calls.voiceCreate[0].from, { type: "text", model: "eleven_ttv_v3", prompt: "A warm, calm Malaysian Chinese man speaking English" });
+  await assert.rejects(() => previewVoice({ client: c, prompt: "short" }), /at least 20/);
+  await assert.rejects(() => designVoice({ client: fakeClient({ voiceStates: ["FAILED"] }), prompt: "A warm, calm Malaysian Chinese man speaking English", ...fast }), /voice/);
 });
