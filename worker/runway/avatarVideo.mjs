@@ -70,6 +70,32 @@ export async function cloneVoice({ client, audioDataUri, name = "My voice", poll
   return created.id;
 }
 
+export const VOICE_MODEL = "eleven_ttv_v3";
+export const MIN_VOICE_PROMPT = 20;
+
+/** A written description of the wanted voice, or a reason it cannot be used. */
+export function cleanVoicePrompt(text) {
+  const t = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (t.length < MIN_VOICE_PROMPT) throw new Error(`Describe the voice in at least ${MIN_VOICE_PROMPT} characters, for example: a warm, calm adult man with a Malaysian Chinese accent speaking English.`);
+  if (t.length > 1000) throw new Error("The voice description is too long (the most allowed here is 1000 characters).");
+  return t;
+}
+
+/** A short audio sample of a described voice, so it can be heard before anything is made. Returns { url, durationSecs }. */
+export async function previewVoice({ client, prompt }) {
+  const r = await client.voices.preview({ model: VOICE_MODEL, prompt: cleanVoicePrompt(prompt) });
+  if (!r?.url) throw new Error("Runway gave no audio preview.");
+  return { url: r.url, durationSecs: r.durationSecs ?? null };
+}
+
+/** Make a voice from a written description (for example an Asian male voice). Returns the voice id. */
+export async function designVoice({ client, prompt, name = "Designed voice", pollMs = 4000, maxWaitMs = 5 * 60_000, sleep = sleepFor, now = Date.now, log = () => {} }) {
+  const created = await client.voices.create({ from: { type: "text", model: VOICE_MODEL, prompt: cleanVoicePrompt(prompt) }, name });
+  log(`Voice designed (${created.id}), waiting for it to be ready…`);
+  await waitUntilReady((id) => client.voices.retrieve(id), created.id, { what: "voice", pollMs, maxWaitMs, sleep, now });
+  return created.id;
+}
+
 /** Make the avatar from a photo (once). Returns its id. */
 export async function createAvatar({ client, photoDataUri, name = "Max Chea", voice, pollMs = 4000, maxWaitMs = 10 * 60_000, sleep = sleepFor, now = Date.now, log = () => {} }) {
   const v = voiceChoice(voice);

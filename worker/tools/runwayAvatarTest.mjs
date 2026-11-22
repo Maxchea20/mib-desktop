@@ -8,7 +8,11 @@
 |
 |   node worker/tools/runwayAvatarTest.mjs                      show the plan
 |   node worker/tools/runwayAvatarTest.mjs --run                make the test video
-|   node worker/tools/runwayAvatarTest.mjs --run --voice adrian choose a voice
+|   node worker/tools/runwayAvatarTest.mjs --run --voice adrian choose a preset voice
+|   node worker/tools/runwayAvatarTest.mjs --run --preview-voice "a warm, calm Malaysian Chinese man speaking English"
+|                                                               only makes a short audio sample of that voice, so you can listen first
+|   node worker/tools/runwayAvatarTest.mjs --run --design-voice "a warm, calm Malaysian Chinese man speaking English"
+|                                                               makes the video with a voice built from that description
 |   node worker/tools/runwayAvatarTest.mjs --run --voice-sample my-voice.mp3
 |                                                               speak with a clone of YOUR voice
 |   --script "text" | --script-file file.txt    what to say (default: a short test)
@@ -27,7 +31,7 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import RunwayML from "@runwayml/sdk";
-import { cleanScript, cloneVoice, estimateSeconds, makeAvatarVideo, toDataUri, voiceChoice, PRESET_VOICES } from "../runway/avatarVideo.mjs";
+import { cleanScript, cleanVoicePrompt, cloneVoice, designVoice, estimateSeconds, makeAvatarVideo, previewVoice, toDataUri, voiceChoice, PRESET_VOICES } from "../runway/avatarVideo.mjs";
 
 const DEFAULT_PHOTO = "https://vdvwcworcsawbopafzfp.supabase.co/storage/v1/object/public/property-images/agent/photo.jpg";
 const DEFAULT_SCRIPT = "Hi, I'm Max Chea, a Real Estate Negotiator based in Ipoh, Perak. I help clients find factories, land, shops and homes.";
@@ -40,6 +44,8 @@ const run = flag("run");
 const outDir = path.resolve(val("out") ?? path.join(os.homedir(), "MIB", "runway"));
 const voiceSample = val("voice-sample");
 const presetName = (val("voice") ?? "adrian").toLowerCase();
+const designText = val("design-voice");
+const previewText = val("preview-voice");
 const script = cleanScript(val("script") ?? (val("script-file") ? fs.readFileSync(val("script-file"), "utf8") : DEFAULT_SCRIPT));
 const log = (m) => console.log(m);
 
@@ -51,7 +57,7 @@ async function loadPhoto(src) {
 }
 
 (async () => {
-  if (!PRESET_VOICES.includes(presetName) && !voiceSample) { console.error(`Unknown voice "${presetName}". Choose one of: ${PRESET_VOICES.join(", ")}`); process.exit(1); }
+  if (!PRESET_VOICES.includes(presetName) && !voiceSample && !designText && !previewText) { console.error(`Unknown voice "${presetName}". Choose one of: ${PRESET_VOICES.join(", ")}`); process.exit(1); }
   fs.mkdirSync(outDir, { recursive: true });
   const stateFile = path.join(outDir, "avatar.json");
   const state = fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, "utf8")) : {};
@@ -60,8 +66,8 @@ async function loadPhoto(src) {
   console.log("Runway talking-video test");
   console.log("-------------------------");
   console.log(`Script (${script.length} characters, about ${estimateSeconds(script)} seconds): ${script}`);
-  console.log(`Voice: ${voiceSample ? `a clone of your voice from ${voiceSample}` : `the "${presetName}" preset`}`);
-  console.log(`Avatar: ${state.avatarId ? `already made (${state.avatarId}), will be reused` : "will be made from your photo (once)"}`);
+  console.log(`Voice: ${previewText ? `audio sample only, of: ${cleanVoicePrompt(previewText)}` : designText ? `designed from: ${cleanVoicePrompt(designText)}` : voiceSample ? `a clone of your voice from ${voiceSample}` : `the "${presetName}" preset`}`);
+  if (!previewText) console.log(`Avatar: ${state.avatarId ? `already made (${state.avatarId}), will be reused` : "will be made from your photo (once)"}`);
   console.log(`Saves to: ${outDir}`);
   console.log("");
   if (!run) {
@@ -74,11 +80,34 @@ async function loadPhoto(src) {
   if (!key) { console.error("RUNWAYML_API_SECRET is not set. Add it to the .env file next to the worker, then run again."); process.exit(1); }
   const client = new RunwayML({ apiKey: key });
 
+  if (previewText) {
+    const sample = await previewVoice({ client, prompt: previewText });
+    const res = await fetch(sample.url);
+    if (!res.ok) throw new Error(`Could not download the audio sample (${res.status}).`);
+    const file = path.join(outDir, `voice-sample-${new Date().toISOString().replace(/[:.]/g, "-")}.mp3`);
+    fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+    console.log(`\nA ${sample.durationSecs ?? "short"}-second sample of that voice is saved here. Listen to it:\n${file}`);
+    console.log("If it sounds right, run again with --design-voice and the same words. If not, change the words and preview again.");
+    return;
+  }
+
+  // a made voice is reused only while it came from the same source (same recording or same description)
+  const source = voiceSample ? `sample:${path.basename(voiceSample)}` : designText ? `design:${cleanVoicePrompt(designText)}` : null;
   let voice = { preset: presetName };
-  if (voiceSample) {
-    const mime = /\.wav$/i.test(voiceSample) ? "audio/wav" : /\.m4a$/i.test(voiceSample) ? "audio/mp4" : "audio/mpeg";
-    const id = state.voiceId ?? (await cloneVoice({ client, audioDataUri: toDataUri(fs.readFileSync(voiceSample), mime), name: "Max Chea", log }));
-    voice = { customId: id }; state.voiceId = id; fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
+  if (source) {
+    let id = state.voiceSource === source ? state.voiceId : undefined;
+    if (!id) {
+      if (voiceSample) {
+        const mime = /\.wav$/i.test(voiceSample) ? "audio/wav" : /\.m4a$/i.test(voiceSample) ? "audio/mp4" : "audio/mpeg";
+        id = await cloneVoice({ client, audioDataUri: toDataUri(fs.readFileSync(voiceSample), mime), name: "Max Chea", log });
+      } else {
+        id = await designVoice({ client, prompt: designText, name: "Max Chea (designed)", log });
+      }
+      state.voiceId = id; state.voiceSource = source; fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
+    } else {
+      log(`Using the voice you already made (${id}).`);
+    }
+    voice = { customId: id };
   }
   voiceChoice(voice);
 
