@@ -22,6 +22,10 @@ import {
 } from "./platforms/google/post.mjs";
 
 import {
+  handleListingIntake,
+} from "./platforms/intake/handler.mjs";
+
+import {
   createAuthManager,
 } from "./auth.mjs";
 
@@ -594,6 +598,16 @@ async function executeJob(
         job
       );
 
+    case "listing_intake":
+      // Becky only (see identity.mjs). Reads a co-broke agent's Facebook post into a draft listing.
+      return await handleListingIntake(
+        job,
+        {
+          supabase,
+          workerName: WORKER_NAME,
+        }
+      );
+
     default:
       throw new Error(
         `No handler registered for job type: ${job.job_type}`
@@ -741,6 +755,11 @@ async function checkForJobs() {
       null;
 
     lastActivityAt = Date.now();
+
+    // Becky waits a little between links, so Facebook does not see a burst of activity.
+    if (job.job_type === "listing_intake") {
+      skipClaimsUntil = Date.now() + 45000;
+    }
 
     if (authFailed && allIdle()) {
       process.exit(2);
