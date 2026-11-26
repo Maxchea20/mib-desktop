@@ -26,6 +26,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const ARTICLE = '[role="article"]';
 const MAIN = '[role="main"]';
+const DIALOG = '[role="dialog"]';
 const SEE_MORE = /^(see more|lihat lagi|查看更多|展开|展開)$/i;
 
 async function loginWallShowing(page) {
@@ -46,25 +47,46 @@ async function openSeeMore(region) {
 }
 
 /**
- * The text of the main post. First the first "article" on the page (a normal post page). If the page has none,
- * the page's main region (some post pages are drawn without one). Never the whole page: that would pull in
- * menus and other people's posts.
+ * The pop-up Facebook opens a post in ("Mr Chee Property Ipoh's Post"), when there is one. The page BEHIND it
+ * is the home feed, which holds other people's posts, so the pop-up must be read first. If several dialogs are
+ * open (chat, cookies), the one with the most text is the post.
+ */
+async function postDialog(page) {
+  const dialogs = await page.locator(DIALOG).all();
+  let best = null;
+  let bestLength = 0;
+  for (const d of dialogs) {
+    const length = ((await d.innerText({ timeout: 3000 }).catch(() => "")) ?? "").trim().length;
+    if (length > bestLength) {
+      best = d;
+      bestLength = length;
+    }
+  }
+  return bestLength >= 60 ? best : null;
+}
+
+/**
+ * The text of the post: from the pop-up when there is one, else the first article on the page, else the main region.
+ * Never the whole page: that would pull in menus and other people's posts.
  */
 async function readPostText(page) {
-  for (const selector of [ARTICLE, MAIN]) {
-    const region = page.locator(selector).first();
+  const dialog = await postDialog(page);
+  const regions = [];
+  if (dialog) regions.push({ region: dialog, from: "the post pop-up" });
+  regions.push({ region: page.locator(ARTICLE).first(), from: ARTICLE }, { region: page.locator(MAIN).first(), from: MAIN });
+  for (const { region, from } of regions) {
     if ((await region.count()) === 0) continue;
     await openSeeMore(region);
     await sleep(800);
     const text = ((await region.innerText({ timeout: 5000 }).catch(() => "")) ?? "").trim();
-    if (text.length >= 20) return { text, from: selector };
+    if (text.length >= 20) return { text, from };
   }
   return { text: "", from: "" };
 }
 
-/** Photo addresses visible in the post (big ones, from Facebook's image servers): in the article, else in the main region. */
+/** Photo addresses visible in the post (big ones, from Facebook's image servers): in the pop-up, else the article, else the main region. */
 async function visiblePhotos(page) {
-  for (const selector of [ARTICLE, MAIN]) {
+  for (const selector of [DIALOG, ARTICLE, MAIN]) {
     const found = await page
       .locator(`${selector} img`)
       .evaluateAll((imgs) => imgs.map((i) => ({ src: i.currentSrc || i.src, w: i.naturalWidth, h: i.naturalHeight })))
@@ -81,29 +103,35 @@ async function describePage(page) {
     const info = await page.evaluate(() => ({
       title: document.title,
       articles: document.querySelectorAll('[role="article"]').length,
+      dialogs: document.querySelectorAll('[role="dialog"]').length,
       mains: document.querySelectorAll('[role="main"]').length,
       images: document.images.length,
       start: (document.body?.innerText ?? "").replace(/\s+/g, " ").trim().slice(0, 200),
     }));
-    return `[page: "${info.title}", ${info.articles} article(s), ${info.mains} main, ${info.images} image(s); text starts: "${info.start}"]`;
+    return `[page: "${info.title}", ${info.articles} article(s), ${info.dialogs} dialog(s), ${info.mains} main, ${info.images} image(s); text starts: "${info.start}"]`;
   } catch {
     return "";
   }
 }
 
 /**
- * For a post with several photos: open the first photo in Facebook's viewer, then step through with the
- * right-arrow key, taking the biggest picture on screen each time, until a photo repeats.
+ * For a post with several photos: go straight to the first photo's own page (clicking can be blocked by
+ * overlays), then step through with the right-arrow key, taking the biggest picture on screen each time,
+ * until a photo repeats.
  */
 async function walkPhotoViewer(page, seen, out, log) {
-  const first = page.locator(`${ARTICLE} a[href*="/photo"], ${MAIN} a[href*="/photo"]`).first();
-  if ((await first.count()) === 0) {
+  const href = await page
+    .locator(`${DIALOG} a[href*="/photo"], ${ARTICLE} a[href*="/photo"], ${MAIN} a[href*="/photo"]`)
+    .first()
+    .getAttribute("href", { timeout: 4000 })
+    .catch(() => null);
+  if (!href) {
     log.log("Becky: no photo link found to open the viewer.");
     return;
   }
   try {
-    await first.click({ timeout: 4000 });
-    await sleep(3000);
+    await page.goto(new URL(href, page.url()).toString(), { waitUntil: "domcontentloaded" });
+    await sleep(6000);
     for (let step = 0; step < MAX_PHOTOS && out.length < MAX_PHOTOS; step++) {
       const imgs = await page
         .locator("img")
@@ -120,7 +148,7 @@ async function walkPhotoViewer(page, seen, out, log) {
     }
     log.log(`Becky: the photo viewer gave ${out.length} photo(s).`);
   } catch (e) {
-    log.log("Becky: the photo viewer stopped:", e instanceof Error ? e.message : e);
+    log.log("Becky: the photo viewer stopped:", e instanceof Error ? e.message.split("\n")[0] : e);
   }
 }
 
@@ -223,3 +251,6 @@ export async function captureFacebookPost(url, { profileDir, log = console }) {
     await context.close().catch(() => {});
   }
 }
+
+// For tests of the page-reading steps only.
+export const _internals = { readPostText, visiblePhotos, postDialog, describePage };
