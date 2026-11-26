@@ -8,8 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "worker:woody": "node worker/worker.mjs",
-    "worker:becky": "node worker/worker.mjs --name Becky"
+    "tauri:woody": "node scripts/run-tauri.mjs Woody",
+    "tauri:becky": "node scripts/run-tauri.mjs Becky"
   },
   "dependencies": {
     "@runwayml/sdk": "^4.29.0",

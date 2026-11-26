@@ -2,7 +2,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { supabase } from "./lib/supabase";
 
-const WORKER_NAME = "MIB Desktop";
+// Woody (posting) is the default. "npm run tauri:becky" starts the app as Becky (listing intake).
+const WORKER_NAME =
+  (import.meta.env.VITE_MIB_WORKER_NAME as string | undefined)?.trim() || "Woody";
 
 type WorkerRecord = {
   id: string;
