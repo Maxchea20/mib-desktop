@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import { handleListingIntake, readPayload } from "./handler.mjs";
 import { createDraft } from "./import.mjs";
 import sharp from "sharp";
+import os from "node:os";
+import fs from "node:fs";
+import path from "node:path";
+
+process.env.MIB_INTAKE_DEBUG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "intake-debug-"));
 
 const quiet = { log() {}, error() {} };
 function fakeSupabase() {
@@ -62,8 +67,10 @@ test("a real run makes a private draft with the co-broke agent and the photos", 
   assert.equal(row.is_public, false);
   assert.equal(row.cobroke_agent_name, "Ah Seng");
   assert.equal(sb.inserted.photos.length, 2);
-  assert.equal(sb.inserted.photos[0].photo_type, "Photo 1");
-  assert.ok(sb.inserted.files.includes("77/Photo_1.jpg") && sb.inserted.files.includes("77/thumb/Photo_1.jpg") && sb.inserted.files.includes("77/medium/Photo_2.jpg"));
+  // the first photo is the listing's cover (its Front House slot); the rest are Photo 2, Photo 3...
+  assert.equal(sb.inserted.photos[0].photo_type, "Front House");
+  assert.equal(sb.inserted.photos[1].photo_type, "Photo 2");
+  assert.ok(sb.inserted.files.includes("77/Front_House.jpg") && sb.inserted.files.includes("77/thumb/Front_House.jpg") && sb.inserted.files.includes("77/medium/Photo_2.jpg"));
   const last = sb.updates.at(-1);
   assert.equal(last.status, "done");
   assert.equal(last.property_id, 77);
@@ -94,5 +101,36 @@ test("a photo that fails is skipped and the draft is still kept", async () => {
   const r = await createDraft({ supabase: sb, fields: { title: "T", category: "Residential", purpose: "For Sale", price: 1, area: "A", state: "Perak" }, cobrokeAgent: "X", photos: [Buffer.from("not an image"), good], log: quiet });
   assert.equal(r.propertyId, 77);
   assert.equal(r.photos, 1);
-  assert.equal(sb.inserted.photos[0].photo_type, "Photo 2");
+  assert.equal(sb.inserted.photos[0].photo_type, "Photo 2"); // the first photo failed, the second kept its own number
+});
+
+test("when the text gives nothing, OpenAI reads the photos (a poster) and the draft is filled from them", async () => {
+  const sb = fakeSupabase();
+  const photo = await sharp({ create: { width: 800, height: 600, channels: 3, background: "#789" } }).jpeg().toBuffer();
+  let photoCalls = 0;
+  const out = await handleListingIntake(job(), {
+    supabase: sb, env: { OPENAI_API_KEY: "k" }, log: quiet,
+    deps: {
+      capture: async () => ({ text: "Facebook menu things only", photos: [photo], notes: [], where: "x" }),
+      ask: async () => JSON.stringify({ title: null, price: null }),
+      askImages: async (_t, imgs) => (photoCalls++, assert.equal(imgs.length, 1), JSON.stringify({ title: "3-bedroom terrace, Taman X", category: "Residential", purpose: "For Sale", price: 430000, area: "Taman X", bedrooms: 3 })),
+    },
+  });
+  assert.equal(photoCalls, 1);
+  assert.equal(sb.inserted.properties[0].price, 430000);
+  assert.match(sb.updates.at(-1).error, /read from the photos/);
+  assert.equal(out.property_id, 77);
+});
+
+test("when nothing at all is found, the note says what Becky read, without phone numbers", async () => {
+  const sb = fakeSupabase();
+  await handleListingIntake(job(), {
+    supabase: sb, env: { OPENAI_API_KEY: "k" }, log: quiet,
+    deps: { capture: async () => ({ text: "Selamat Pagi call 012-345 6789 about nothing", photos: [], notes: [], where: "p" }), ask: async () => "{}" },
+  });
+  const note = sb.updates.at(-1).error;
+  assert.match(note, /OpenAI found no property details/);
+  assert.match(note, /Selamat Pagi/);
+  assert.ok(!/345 6789/.test(note));
+  assert.ok(fs.readdirSync(process.env.MIB_INTAKE_DEBUG_DIR).some((f) => f.startsWith("job-")));
 });

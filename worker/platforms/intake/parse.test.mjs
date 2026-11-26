@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { redactContacts, normalizeFields, buildPropertyRow, isPostPhoto, photoKey, photoTypeFor, summaryNote, MAX_TEXT_FOR_AI } from "./parse.mjs";
+import { isEmptyFacts, photoSlot, snippet, redactContacts, normalizeFields, buildPropertyRow, isPostPhoto, photoKey, photoTypeFor, summaryNote, MAX_TEXT_FOR_AI } from "./parse.mjs";
 
 test("phone numbers, emails, links and @names are removed before the AI sees the post", () => {
   const t = redactContacts("Taman Canning RM430k\nCall Ah Seng 012-345 6789 or +60 16-521 0993\nmail me a@b.com https://fb.com/x www.site.my @agent_one");
@@ -85,4 +85,29 @@ test("only real post photos are kept", () => {
 test("names and the summary note", () => {
   assert.equal(photoTypeFor(3), "Photo 3");
   assert.match(summaryNote({ photos: 1, notes: ["No price found: please enter it."] }), /1 photo\. .*No price found/);
+});
+
+test("wrapped or differently-cased AI answers are still understood", () => {
+  assert.equal(normalizeFields({ listing: { Price: 430000, Area: "Taman X", Category: "Residential" } }).fields.price, 430000);
+  assert.equal(normalizeFields({ data: { listing: { price: 1000, area: "A" } } }).fields.area, "A");
+  assert.equal(normalizeFields({ price: 5, area: "B" }).fields.area, "B");
+});
+
+test("an empty result is recognised", () => {
+  assert.equal(isEmptyFacts(normalizeFields({}).fields), true);
+  assert.equal(isEmptyFacts(normalizeFields({ area: "X" }).fields), false);
+  assert.equal(isEmptyFacts(normalizeFields({ price: 100 }).fields), false);
+});
+
+test("the first photo is the cover slot of its category, the rest are numbered", () => {
+  assert.deepEqual(photoSlot(0, "Residential"), { type: "Front House", file: "Front_House.jpg" });
+  assert.deepEqual(photoSlot(0, "Commercial"), { type: "Shop Front", file: "Shop_Front.jpg" });
+  assert.deepEqual(photoSlot(0, "Industrial"), { type: "Factory Front", file: "Factory_Front.jpg" });
+  assert.deepEqual(photoSlot(0, "Land"), { type: "Front View", file: "Front_View.jpg" });
+  assert.deepEqual(photoSlot(1, "Land"), { type: "Photo 2", file: "Photo_2.jpg" });
+});
+
+test("the snippet has no phone numbers and is short", () => {
+  assert.ok(!/345/.test(snippet("hello 012-345 6789 world")));
+  assert.equal(Array.from(snippet("a".repeat(500))).length, 160);
 });
