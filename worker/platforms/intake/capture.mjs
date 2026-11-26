@@ -1,5 +1,7 @@
 import { chromium } from "playwright";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { isPostPhoto, photoKey } from "./parse.mjs";
 
 /*
@@ -16,6 +18,9 @@ import { isPostPhoto, photoKey } from "./parse.mjs";
 
 const NAV_TIMEOUT = 45_000;
 const LOGIN_WAIT_MS = 180_000;
+// Facebook is slow to draw a post and its photos, so Becky always lets the page load at least this long (INTAKE_LOAD_SECONDS in .env to change).
+const LOAD_MIN_MS = Math.max(15, Number(process.env.INTAKE_LOAD_SECONDS) || 60) * 1000;
+const SETTLE_MS = 8_000;
 const MAX_PHOTOS = 12;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -81,6 +86,40 @@ async function walkPhotoViewer(page, seen, out) {
 }
 
 /**
+ * Waits for the post to appear, but never less than LOAD_MIN_MS in total, then a few seconds more so the
+ * photos draw. A login page is left to the caller (it is waiting for you, not for the post).
+ */
+async function letPageLoad(page, log) {
+  const started = Date.now();
+  log.log(`Becky is letting the page load (at least ${Math.round(LOAD_MIN_MS / 1000)} seconds)...`);
+  while (Date.now() - started < LOAD_MIN_MS) {
+    await sleep(2000);
+    if (await loginWallShowing(page)) return;
+  }
+  // still no post? give it one more minute, since Facebook can be very slow
+  const extraUntil = Date.now() + 60_000;
+  while (Date.now() < extraUntil && (await page.locator(ARTICLE).count()) === 0) {
+    if (await loginWallShowing(page)) return;
+    await sleep(2000);
+  }
+  await sleep(SETTLE_MS);
+}
+
+/** When nothing can be read, keep what Becky saw so the cause can be found. */
+async function saveDebug(page, log) {
+  try {
+    const dir = path.join(os.homedir(), "MIB", "intake-debug");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `post-${new Date().toISOString().replace(/[:.]/g, "-")}.png`);
+    await page.screenshot({ path: file, fullPage: false });
+    log.log("Screenshot of what Becky saw:", file);
+    return file;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Opens the post and returns its text and photo files.
  * Returns { text, photos: Buffer[], log: string[] }. Never throws for "nothing found": it returns what it has.
  */
@@ -98,7 +137,7 @@ export async function captureFacebookPost(url, { profileDir, log = console }) {
   try {
     const page = context.pages()[0] ?? (await context.newPage());
     await page.goto(url, { waitUntil: "domcontentloaded" });
-    await sleep(4000);
+    await letPageLoad(page, log);
 
     if (await loginWallShowing(page)) {
       log.log("Becky is not logged in to Facebook. Please log in in the browser window; she waits up to 3 minutes.");
@@ -106,11 +145,14 @@ export async function captureFacebookPost(url, { profileDir, log = console }) {
       while (Date.now() < until && (await loginWallShowing(page))) await sleep(3000);
       if (await loginWallShowing(page)) throw new Error("Becky is not logged in to Facebook. Run her again and log in in her browser window.");
       await page.goto(url, { waitUntil: "domcontentloaded" });
-      await sleep(4000);
+      await letPageLoad(page, log);
     }
 
     const text = await readPostText(page);
-    if (!text) notes.push("The post text could not be read.");
+    if (!text) {
+      const shot = await saveDebug(page, log);
+      notes.push(shot ? `The post text could not be read. A screenshot of what Becky saw is saved at ${shot}.` : "The post text could not be read.");
+    }
 
     const seen = new Set();
     const srcs = [];

@@ -59,7 +59,7 @@ export async function handleListingIntake(job, { supabase, workerName = "Becky",
   try {
     const captured = await capture(url, { profileDir: BECKY_PROFILE_DIR(), log });
     if (!captured.text && captured.photos.length === 0) {
-      throw new Error("Nothing could be read from the post. It may be private, deleted, or Facebook changed its page.");
+      throw new Error(`Nothing could be read from the post. It may be private, deleted, or Facebook changed its page. ${(captured.notes ?? []).join(" ")}`.trim());
     }
 
     const notes = [...(captured.notes ?? [])];
