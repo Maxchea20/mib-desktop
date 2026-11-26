@@ -15,13 +15,16 @@ export function extractOutputText(json) {
   return parts.join("");
 }
 
+/** OpenAI's JSON mode needs the word JSON inside the message itself, not only in the instructions. */
+export const inputFor = (cleanText) => "Post text:\n---\n" + cleanText + "\n---\n\nReturn the facts as the JSON object described in the instructions.";
+
 /** Sends the already-cleaned post text to OpenAI and returns the JSON text it answers with. */
 export async function askOpenAI(cleanText, { apiKey, fetchImpl = fetch, timeoutMs = 60_000 }) {
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set in the worker's .env file.");
   const res = await fetchImpl(OPENAI_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: MODEL, instructions: INTAKE_INSTRUCTIONS, input: cleanText, text: { format: { type: "json_object" } } }),
+    body: JSON.stringify({ model: MODEL, instructions: INTAKE_INSTRUCTIONS, input: inputFor(cleanText), text: { format: { type: "json_object" } } }),
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) {

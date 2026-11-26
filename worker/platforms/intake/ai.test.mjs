@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractOutputText, askOpenAI } from "./ai.mjs";
+import { extractOutputText, askOpenAI, inputFor } from "./ai.mjs";
 
 test("the answer text is found in the raw OpenAI response", () => {
   assert.equal(extractOutputText({ output_text: "{\"a\":1}" }), "{\"a\":1}");
@@ -19,7 +19,9 @@ test("the request carries the key, the instructions and the cleaned text only", 
   assert.equal(seen.url, "https://api.openai.com/v1/responses");
   assert.equal(seen.init.headers.Authorization, "Bearer k");
   const body = JSON.parse(seen.init.body);
-  assert.equal(body.input, "Taman X RM1");
+  assert.equal(body.input, inputFor("Taman X RM1"));
+  assert.match(body.input, /Taman X RM1/);
+  assert.match(body.input, /JSON/); // OpenAI rejects JSON mode when the message never says JSON
   assert.match(body.instructions, /ONLY facts that are written in the post/);
 });
 
