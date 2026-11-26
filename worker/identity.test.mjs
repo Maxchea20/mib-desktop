@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { workerNameFrom, canRun, profileDirFor, pickWorkerRow } from "./identity.mjs";
+import { workerNamesFrom, hasExplicitName, workerNameFrom, canRun, profileDirFor, pickWorkerRow } from "./identity.mjs";
 
 test("no name means Woody, so the normal start-up is unchanged", () => {
   assert.equal(workerNameFrom([], {}), "Woody");
@@ -38,4 +38,13 @@ test("Woody takes over the old MIB Desktop row, so his old jobs still belong to 
   assert.equal(pickWorkerRow(rows, "Becky"), null);
   assert.equal(pickWorkerRow([{ id: "a", worker_name: "MIB Desktop" }, { id: "b", worker_name: "Woody" }], "Woody").id, "b");
   assert.equal(pickWorkerRow([], "Woody"), null);
+});
+
+test("started with no name, one app runs Woody and Becky; with a name, only that worker", () => {
+  assert.deepEqual(workerNamesFrom([], {}), ["Woody", "Becky"]);
+  assert.deepEqual(workerNamesFrom(["node", "w.mjs"], {}), ["Woody", "Becky"]);
+  assert.deepEqual(workerNamesFrom(["--name", "Becky"], {}), ["Becky"]);
+  assert.deepEqual(workerNamesFrom([], { MIB_WORKER_NAME: "Woody" }), ["Woody"]);
+  assert.equal(hasExplicitName(["--name"], {}), false);
+  assert.equal(hasExplicitName([], { MIB_WORKER_NAME: "  " }), false);
 });

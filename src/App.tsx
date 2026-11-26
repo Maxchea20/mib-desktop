@@ -2,9 +2,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { supabase } from "./lib/supabase";
 
-// Woody (posting) is the default. "npm run tauri:becky" starts the app as Becky (listing intake).
-const WORKER_NAME =
-  (import.meta.env.VITE_MIB_WORKER_NAME as string | undefined)?.trim() || "Woody";
+// The window shows Woody (posting). Becky (listing intake) runs in the same app and shows on the CRM Worker queue page.
+const WORKER_NAME = "Woody";
 
 type WorkerRecord = {
   id: string;

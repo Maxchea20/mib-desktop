@@ -23,6 +23,8 @@ export const DEFAULT_WORKER_NAME = "Woody";
 export const LEGACY_WORKER_NAME = "MIB Desktop";
 export const INTAKE_WORKER = "Becky";
 export const INTAKE_JOB_TYPE = "listing_intake";
+/** Started with no name (the usual "npm run tauri dev"), one app runs BOTH workers. */
+export const DEFAULT_WORKERS = [DEFAULT_WORKER_NAME, INTAKE_WORKER];
 
 /** The name from `--name X`, `--name=X`, or MIB_WORKER_NAME; otherwise Woody. Only letters, digits, space, dash. */
 export function workerNameFrom(argv = [], env = {}) {
@@ -36,6 +38,17 @@ export function workerNameFrom(argv = [], env = {}) {
   const clean = raw.replace(/[^A-Za-z0-9 _-]/g, "").replace(/\s+/g, " ").trim().slice(0, 30);
   if (!clean) return DEFAULT_WORKER_NAME;
   return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+/** True when a name was asked for with --name or MIB_WORKER_NAME. */
+export function hasExplicitName(argv = [], env = {}) {
+  const args = argv.map(String);
+  return args.some((a, i) => (a === "--name" && Boolean(args[i + 1])) || (a.startsWith("--name=") && a.length > 7)) || Boolean(String(env.MIB_WORKER_NAME ?? "").trim());
+}
+
+/** The workers this process runs: just the one asked for, or Woody and Becky together. */
+export function workerNamesFrom(argv = [], env = {}) {
+  return hasExplicitName(argv, env) ? [workerNameFrom(argv, env)] : [...DEFAULT_WORKERS];
 }
 
 const isIntake = (name) => String(name ?? "").trim().toLowerCase() === INTAKE_WORKER.toLowerCase();

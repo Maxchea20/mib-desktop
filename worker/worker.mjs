@@ -1,7 +1,7 @@
 import { pollDelayMs } from "./polling.mjs";
 import "dotenv/config";
 import "./nameSetup.mjs";
-import { canRun, pickWorkerRow } from "./identity.mjs";
+import { canRun, pickWorkerRow, workerNamesFrom, INTAKE_WORKER } from "./identity.mjs";
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -87,47 +87,25 @@ const supabase =
     }
   );
 
-// Woody (the default) posts; Becky (--name Becky) reads listing intake links. See identity.mjs.
-const WORKER_NAME =
-  process.env.MIB_WORKER_NAME;
+// One app runs Woody (posting) and Becky (listing intake) together; each only takes its own kind of job.
+// Started with --name, it runs just that one. See identity.mjs.
+const WORKER_NAMES = workerNamesFrom(process.argv.slice(2), process.env);
 
-let workerId = null;
+const lanes = [];
 
-let currentJobId = null;
+let authFailed = false;
 
-let skipClaimsUntil = 0;
-
-let heartbeatTimer = null;
-
-let pollTimer = null;
-
-// When the worker last started or finished a job. Polling is fast near this time, slower when quiet.
-let lastActivityAt = Date.now();
-
-let exitWhenIdle = false;
-
-function stopTimers() {
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
-
-  if (pollTimer) {
-    clearTimeout(pollTimer);
-    pollTimer = null;
-  }
-}
+const allIdle = () => lanes.every((lane) => !lane.isBusy());
 
 function shutdownAfterAuthFailure() {
-  stopTimers();
+  authFailed = true;
 
-  if (currentJobId) {
-    // Let the running job finish; exit afterwards (see checkForJobs).
-    exitWhenIdle = true;
-    return;
+  lanes.forEach((lane) => lane.stopTimers());
+
+  // A running job is allowed to finish; the last worker to finish exits (see the end of its job).
+  if (allIdle()) {
+    process.exit(2);
   }
-
-  process.exit(2);
 }
 
 const auth =
@@ -164,6 +142,32 @@ function logAuthProblem(label, error) {
   lastAuthLog.set(key, Date.now());
 
   console.error(`${label}:`, message);
+}
+
+function createLane(WORKER_NAME, { exitOnStartFail }) {
+let workerId = null;
+
+let currentJobId = null;
+
+let skipClaimsUntil = 0;
+
+let heartbeatTimer = null;
+
+let pollTimer = null;
+
+// When the worker last started or finished a job. Polling is fast near this time, slower when quiet.
+let lastActivityAt = Date.now();
+
+function stopTimers() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
 }
 
 async function registerWorker() {
@@ -281,7 +285,7 @@ async function heartbeat() {
   }
 
   console.log(
-    `[${new Date().toLocaleTimeString()}] Worker online`
+    `[${new Date().toLocaleTimeString()}] ${WORKER_NAME} online`
   );
 }
 
@@ -738,7 +742,7 @@ async function checkForJobs() {
 
     lastActivityAt = Date.now();
 
-    if (exitWhenIdle) {
+    if (authFailed && allIdle()) {
       process.exit(2);
     }
   }
@@ -753,7 +757,7 @@ async function startWorker() {
     );
 
     console.log(
-      "MIB DESKTOP WORKER"
+      `MIB DESKTOP WORKER: ${WORKER_NAME}`
     );
 
     console.log(
@@ -772,7 +776,7 @@ async function startWorker() {
     console.log("");
 
     console.log(
-      "🟢 MIB Desktop Worker ONLINE"
+      `🟢 ${WORKER_NAME} ONLINE`
     );
 
     console.log("");
@@ -805,7 +809,7 @@ async function startWorker() {
     console.error("");
 
     console.error(
-      "🔴 Worker startup failed:"
+      `🔴 ${WORKER_NAME} startup failed:`
     );
 
     console.error(
@@ -814,8 +818,29 @@ async function startWorker() {
 
     console.error("");
 
-    process.exit(1);
+    // Alone, a failed start ends the process, as before. With another worker running, the others carry on.
+    if (exitOnStartFail) {
+      process.exit(1);
+    }
+
+    stopTimers();
   }
 }
 
-startWorker();
+return {
+  name: WORKER_NAME,
+  start: startWorker,
+  stopTimers,
+  isBusy: () => currentJobId !== null,
+};
+}
+
+for (const name of WORKER_NAMES) {
+  // Woody failing to start ends the app, as it always did. Becky failing (for example before the database
+  // change for named workers has been run) never takes Woody down.
+  lanes.push(createLane(name, { exitOnStartFail: WORKER_NAMES.length === 1 || name !== INTAKE_WORKER }));
+}
+
+for (const lane of lanes) {
+  lane.start();
+}
