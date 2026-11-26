@@ -2,7 +2,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { supabase } from "./lib/supabase";
 
-const WORKER_NAME = "MIB Desktop";
+// The window shows Woody (posting). Becky (listing intake) runs in the same app and shows on the CRM Worker queue page.
+const WORKER_NAME = "Woody";
 
 type WorkerRecord = {
   id: string;

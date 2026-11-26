@@ -1,5 +1,7 @@
 import { pollDelayMs } from "./polling.mjs";
 import "dotenv/config";
+import "./nameSetup.mjs";
+import { canRun, pickWorkerRow, workerNamesFrom, INTAKE_WORKER } from "./identity.mjs";
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -85,44 +87,25 @@ const supabase =
     }
   );
 
-const WORKER_NAME =
-  "MIB Desktop";
+// One app runs Woody (posting) and Becky (listing intake) together; each only takes its own kind of job.
+// Started with --name, it runs just that one. See identity.mjs.
+const WORKER_NAMES = workerNamesFrom(process.argv.slice(2), process.env);
 
-let workerId = null;
+const lanes = [];
 
-let currentJobId = null;
+let authFailed = false;
 
-let heartbeatTimer = null;
-
-let pollTimer = null;
-
-// When the worker last started or finished a job. Polling is fast near this time, slower when quiet.
-let lastActivityAt = Date.now();
-
-let exitWhenIdle = false;
-
-function stopTimers() {
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
-
-  if (pollTimer) {
-    clearTimeout(pollTimer);
-    pollTimer = null;
-  }
-}
+const allIdle = () => lanes.every((lane) => !lane.isBusy());
 
 function shutdownAfterAuthFailure() {
-  stopTimers();
+  authFailed = true;
 
-  if (currentJobId) {
-    // Let the running job finish; exit afterwards (see checkForJobs).
-    exitWhenIdle = true;
-    return;
+  lanes.forEach((lane) => lane.stopTimers());
+
+  // A running job is allowed to finish; the last worker to finish exits (see the end of its job).
+  if (allIdle()) {
+    process.exit(2);
   }
-
-  process.exit(2);
 }
 
 const auth =
@@ -161,6 +144,32 @@ function logAuthProblem(label, error) {
   console.error(`${label}:`, message);
 }
 
+function createLane(WORKER_NAME, { exitOnStartFail }) {
+let workerId = null;
+
+let currentJobId = null;
+
+let skipClaimsUntil = 0;
+
+let heartbeatTimer = null;
+
+let pollTimer = null;
+
+// When the worker last started or finished a job. Polling is fast near this time, slower when quiet.
+let lastActivityAt = Date.now();
+
+function stopTimers() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+}
+
 async function registerWorker() {
   const session =
     await ensureFreshSession();
@@ -173,35 +182,45 @@ async function registerWorker() {
     userId
   );
 
-  const {
-    data,
-    error,
-  } =
+  // One row per worker name. Woody takes over the old "MIB Desktop" row, so his earlier jobs still belong to him.
+  const { data: existing, error: readError } =
     await supabase
-      .from(
-        "desktop_workers"
-      )
-      .upsert(
-        {
-          user_id:
-            userId,
+      .from("desktop_workers")
+      .select("id, worker_name")
+      .eq("user_id", userId);
 
-          worker_name:
-            WORKER_NAME,
+  if (readError) {
+    throw readError;
+  }
 
-          status:
-            "online",
+  const row = pickWorkerRow(existing, WORKER_NAME);
+  const nowIso = new Date().toISOString();
+  let data = null;
+  let error = null;
 
-          last_seen:
-            new Date().toISOString(),
-        },
-        {
-          onConflict:
-            "user_id",
-        }
-      )
-      .select("id")
-      .single();
+  if (row) {
+    ({ data, error } =
+      await supabase
+        .from("desktop_workers")
+        .update({ worker_name: WORKER_NAME, status: "online", last_seen: nowIso })
+        .eq("id", row.id)
+        .select("id")
+        .single());
+  } else {
+    ({ data, error } =
+      await supabase
+        .from("desktop_workers")
+        .insert({ user_id: userId, worker_name: WORKER_NAME, status: "online", last_seen: nowIso })
+        .select("id")
+        .single());
+
+    if (error?.code === "23505") {
+      throw new Error(
+        `Could not register ${WORKER_NAME}: the database still allows only one worker per user. ` +
+          "Run supabase/audit/12_named_workers.sql in Supabase, then start this worker again."
+      );
+    }
+  }
 
   if (error) {
     throw error;
@@ -217,7 +236,7 @@ async function registerWorker() {
     data.id;
 
   console.log(
-    "Registered worker:",
+    `Registered worker ${WORKER_NAME}:`,
     workerId
   );
 }
@@ -266,7 +285,7 @@ async function heartbeat() {
   }
 
   console.log(
-    `[${new Date().toLocaleTimeString()}] Worker online`
+    `[${new Date().toLocaleTimeString()}] ${WORKER_NAME} online`
   );
 }
 
@@ -591,6 +610,10 @@ async function checkForJobs() {
     return;
   }
 
+  if (Date.now() < skipClaimsUntil) {
+    return;
+  }
+
   // No valid session -> no job is claimed or run.
   try {
     await ensureFreshSession();
@@ -632,6 +655,22 @@ async function checkForJobs() {
 
   const job =
     data[0];
+
+  // Safety net: this worker only runs its own kind of job. A job of another kind
+  // is put back in the queue untouched (and not looked at again for a minute).
+  if (!canRun(WORKER_NAME, job.job_type)) {
+    console.log(
+      `${WORKER_NAME} does not run "${job.job_type}" jobs. Putting job ${job.id} back in the queue.`
+    );
+
+    await supabase
+      .from("desktop_jobs")
+      .update({ status: "queued" })
+      .eq("id", job.id);
+
+    skipClaimsUntil = Date.now() + 60000;
+    return;
+  }
 
   lastActivityAt = Date.now();
 
@@ -703,7 +742,7 @@ async function checkForJobs() {
 
     lastActivityAt = Date.now();
 
-    if (exitWhenIdle) {
+    if (authFailed && allIdle()) {
       process.exit(2);
     }
   }
@@ -718,7 +757,7 @@ async function startWorker() {
     );
 
     console.log(
-      "MIB DESKTOP WORKER"
+      `MIB DESKTOP WORKER: ${WORKER_NAME}`
     );
 
     console.log(
@@ -737,7 +776,7 @@ async function startWorker() {
     console.log("");
 
     console.log(
-      "🟢 MIB Desktop Worker ONLINE"
+      `🟢 ${WORKER_NAME} ONLINE`
     );
 
     console.log("");
@@ -770,7 +809,7 @@ async function startWorker() {
     console.error("");
 
     console.error(
-      "🔴 Worker startup failed:"
+      `🔴 ${WORKER_NAME} startup failed:`
     );
 
     console.error(
@@ -779,8 +818,29 @@ async function startWorker() {
 
     console.error("");
 
-    process.exit(1);
+    // Alone, a failed start ends the process, as before. With another worker running, the others carry on.
+    if (exitOnStartFail) {
+      process.exit(1);
+    }
+
+    stopTimers();
   }
 }
 
-startWorker();
+return {
+  name: WORKER_NAME,
+  start: startWorker,
+  stopTimers,
+  isBusy: () => currentJobId !== null,
+};
+}
+
+for (const name of WORKER_NAMES) {
+  // Woody failing to start ends the app, as it always did. Becky failing (for example before the database
+  // change for named workers has been run) never takes Woody down.
+  lanes.push(createLane(name, { exitOnStartFail: WORKER_NAMES.length === 1 || name !== INTAKE_WORKER }));
+}
+
+for (const lane of lanes) {
+  lane.start();
+}
