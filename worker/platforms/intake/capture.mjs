@@ -91,31 +91,36 @@ async function describePage(page) {
   }
 }
 
-/** For a post with several photos, open the photo viewer and step through with "Next". */
-async function walkPhotoViewer(page, seen, out) {
+/**
+ * For a post with several photos: open the first photo in Facebook's viewer, then step through with the
+ * right-arrow key, taking the biggest picture on screen each time, until a photo repeats.
+ */
+async function walkPhotoViewer(page, seen, out, log) {
   const first = page.locator(`${ARTICLE} a[href*="/photo"], ${MAIN} a[href*="/photo"]`).first();
-  if ((await first.count()) === 0) return;
+  if ((await first.count()) === 0) {
+    log.log("Becky: no photo link found to open the viewer.");
+    return;
+  }
   try {
     await first.click({ timeout: 4000 });
-    await sleep(2500);
+    await sleep(3000);
     for (let step = 0; step < MAX_PHOTOS && out.length < MAX_PHOTOS; step++) {
       const imgs = await page
-        .locator('img[data-visualcompletion="media-vc-image"], [role="dialog"] img, [role="main"] img')
+        .locator("img")
         .evaluateAll((list) => list.map((i) => ({ src: i.currentSrc || i.src, w: i.naturalWidth, h: i.naturalHeight })))
         .catch(() => []);
       const big = imgs.filter((p) => isPostPhoto(p.src, p.w, p.h)).sort((a, b) => b.w * b.h - a.w * a.h)[0];
       if (!big) break;
       const key = photoKey(big.src);
-      if (seen.has(key)) break; // came back round to one we have: done
+      if (seen.has(key)) break; // back at one we already have: finished
       seen.add(key);
       out.push(big.src);
-      const next = page.locator('[aria-label="Next photo"], [aria-label="Next"], [aria-label="下一张"], [aria-label="Seterusnya"]').first();
-      if ((await next.count()) === 0) break;
-      await next.click({ timeout: 3000 }).catch(() => {});
-      await sleep(1500);
+      await page.keyboard.press("ArrowRight");
+      await sleep(2000);
     }
-  } catch {
-    /* the photos found so far are kept */
+    log.log(`Becky: the photo viewer gave ${out.length} photo(s).`);
+  } catch (e) {
+    log.log("Becky: the photo viewer stopped:", e instanceof Error ? e.message : e);
   }
 }
 
@@ -199,7 +204,8 @@ export async function captureFacebookPost(url, { profileDir, log = console }) {
         srcs.push(p.src);
       }
     }
-    if (srcs.length < 2) await walkPhotoViewer(page, seen, srcs);
+    log.log(`Becky found ${srcs.length} photo(s) in the post itself.`);
+    if (srcs.length < 2) await walkPhotoViewer(page, seen, srcs, log);
 
     const photos = [];
     for (const src of srcs.slice(0, MAX_PHOTOS)) {
@@ -212,7 +218,7 @@ export async function captureFacebookPost(url, { profileDir, log = console }) {
     }
     if (photos.length === 0) notes.push(`No photos could be downloaded from the post${srcs.length ? ` (${srcs.length} found, none could be downloaded)` : " (none found on the page)"}.`);
     else log.log(`Becky downloaded ${photos.length} photo(s).`);
-    return { text, photos, notes };
+    return { text, photos, notes, where };
   } finally {
     await context.close().catch(() => {});
   }

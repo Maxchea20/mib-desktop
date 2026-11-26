@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import { buildPropertyRow, photoFileFor, photoTypeFor } from "./parse.mjs";
+import { buildPropertyRow, photoSlot } from "./parse.mjs";
 
 // Same sizes and folders as the CRM's photo storage (see mib-v1/src/lib/photoSize.ts).
 const BUCKET = "property-images";
@@ -27,7 +27,7 @@ export async function createDraft({ supabase, fields, cobrokeAgent, photos, log 
   let saved = 0;
   for (let i = 0; i < photos.length; i++) {
     const n = i + 1;
-    const file = photoFileFor(n);
+    const { type, file } = photoSlot(i, fields.category);
     try {
       const [main, medium, thumb] = await Promise.all([resized(photos[i], MAIN), resized(photos[i], MEDIUM), resized(photos[i], THUMB)]);
       const up = (path, buf) => supabase.storage.from(BUCKET).upload(path, buf, { upsert: true, contentType: "image/jpeg", cacheControl: CACHE });
@@ -37,7 +37,7 @@ export async function createDraft({ supabase, fields, cobrokeAgent, photos, log 
       const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(`${propertyId}/${file}`);
       const { error: rowError } = await supabase
         .from("property_photos")
-        .upsert({ property_id: propertyId, photo_type: photoTypeFor(n), image_url: `${pub.publicUrl}?t=${Date.now()}`, file_name: file }, { onConflict: "property_id,photo_type" });
+        .upsert({ property_id: propertyId, photo_type: type, image_url: `${pub.publicUrl}?t=${Date.now()}`, file_name: file }, { onConflict: "property_id,photo_type" });
       if (rowError) throw new Error(rowError.message);
       saved++;
     } catch (e) {

@@ -55,6 +55,17 @@ const whole = (v, max) => {
   return Number.isInteger(n) && n >= 0 && n <= max ? n : null;
 };
 
+/** Lower-case the keys, and step inside {"listing": {...}} / {"data": {...}} style wrappers the AI sometimes adds. */
+function unwrap(obj) {
+  const lower = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k.trim().toLowerCase(), v]));
+  let o = lower(obj);
+  for (let i = 0; i < 2; i++) {
+    const keys = Object.keys(o);
+    if (keys.length === 1 && o[keys[0]] && typeof o[keys[0]] === "object" && !Array.isArray(o[keys[0]])) o = lower(o[keys[0]]);
+  }
+  return o;
+}
+
 /**
  * Turns the AI's answer into clean fields plus a list of things for you to check.
  * Accepts the JSON text or an object; anything unusable gives a safe, mostly empty draft.
@@ -69,6 +80,7 @@ export function normalizeFields(input) {
     }
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) raw = {};
+  raw = unwrap(raw);
 
   const notes = [];
 
@@ -156,4 +168,25 @@ export function photoKey(src) {
 export function summaryNote({ photos, notes }) {
   const parts = [`Draft made with ${photos} photo${photos === 1 ? "" : "s"}. Please check every detail before you go live.`];
   return [...parts, ...notes].join(" ");
+}
+
+/** True when nothing useful was read (no price, no area, no sizes, no rooms). */
+export function isEmptyFacts(f) {
+  return f.price === 0 && !f.area && f.bedrooms === null && !f.built_up && !f.land_size;
+}
+
+/** What the draft's first photo is called: the category's cover slot, so it shows as the listing's main picture. */
+const COVER = { Residential: "Front House", Commercial: "Shop Front", Industrial: "Factory Front", Land: "Front View" };
+
+export function photoSlot(index, category) {
+  if (index === 0) {
+    const type = COVER[category] ?? COVER.Residential;
+    return { type, file: `${type.replace(/\s+/g, "_")}.jpg` };
+  }
+  return { type: photoTypeFor(index + 1), file: photoFileFor(index + 1) };
+}
+
+/** A short, contact-free snippet of the text, for the note when nothing could be understood. */
+export function snippet(text, max = 160) {
+  return Array.from(redactContacts(text).replace(/\s+/g, " ")).slice(0, max).join("");
 }

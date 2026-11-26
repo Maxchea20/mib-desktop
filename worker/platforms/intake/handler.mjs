@@ -1,9 +1,11 @@
 import path from "node:path";
 import os from "node:os";
-import { askOpenAI } from "./ai.mjs";
+import fs from "node:fs";
+import sharp from "sharp";
+import { askOpenAI, askOpenAIWithImages } from "./ai.mjs";
 import { captureFacebookPost } from "./capture.mjs";
 import { createDraft } from "./import.mjs";
-import { normalizeFields, redactContacts, summaryNote } from "./parse.mjs";
+import { isEmptyFacts, normalizeFields, redactContacts, snippet, summaryNote } from "./parse.mjs";
 
 /*
 |--------------------------------------------------------------------------
@@ -19,6 +21,18 @@ import { normalizeFields, redactContacts, summaryNote } from "./parse.mjs";
 */
 
 const FB_HOST = /(^|\.)(facebook\.com|fb\.com|fb\.watch|fb\.me)$/i;
+
+/** Keeps what Becky read and what OpenAI answered on this PC, so a poor result can be understood. */
+function saveDebugFile(jobId, info) {
+  try {
+    const dir = process.env.MIB_INTAKE_DEBUG_DIR || path.join(os.homedir(), "MIB", "intake-debug");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `job-${String(jobId).slice(0, 8)}.txt`);
+    fs.writeFileSync(file, [`URL: ${info.url}`, `PAGE: ${info.where ?? ""}`, "", "TEXT READ:", info.text || "(none)", "", ...info.answers, "", "NOTES:", ...info.notes].join("\n"));
+  } catch {
+    /* the debug copy is only a help */
+  }
+}
 
 export const BECKY_PROFILE_DIR = () => process.env.FACEBOOK_PROFILE_DIR || path.join(os.homedir(), "MIB", "facebook-profile-becky");
 
@@ -41,6 +55,7 @@ export async function handleListingIntake(job, { supabase, workerName = "Becky",
   const { intakeId, url, cobrokeAgent, dryRun } = readPayload(job);
   const capture = deps.capture ?? captureFacebookPost;
   const ask = deps.ask ?? askOpenAI;
+  const askImages = deps.askImages ?? askOpenAIWithImages;
   const draft = deps.createDraft ?? createDraft;
 
   const update = async (patch) => {
@@ -63,16 +78,45 @@ export async function handleListingIntake(job, { supabase, workerName = "Becky",
     }
 
     const notes = [...(captured.notes ?? [])];
-    let fields;
+    const cleanText = redactContacts(captured.text);
+    const answers = [];
+    let fields = normalizeFields({}).fields;
+    let fieldNotes = [];
+
     if (captured.text) {
-      const answer = await ask(redactContacts(captured.text), { apiKey: env.OPENAI_API_KEY });
-      const out = normalizeFields(answer);
-      fields = out.fields;
-      notes.push(...out.notes);
-    } else {
-      fields = normalizeFields({}).fields;
-      notes.push("No text was read, so no details were filled in.");
+      const answer = await ask(cleanText, { apiKey: env.OPENAI_API_KEY });
+      answers.push(`TEXT ANSWER: ${answer}`);
+      log.log("OpenAI answered (from the text):", String(answer).replace(/\s+/g, " ").slice(0, 300));
+      ({ fields, notes: fieldNotes } = normalizeFields(answer));
     }
+
+    // Details written on a picture (a poster): when the text gave nothing, let OpenAI read the photos too.
+    if (isEmptyFacts(fields) && captured.photos.length > 0) {
+      try {
+        log.log("Nothing useful in the text. Asking OpenAI to read the photos...");
+        const small = await Promise.all(
+          captured.photos.slice(0, 3).map((b) => sharp(b, { failOn: "none" }).rotate().resize({ width: 1280, height: 1280, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 72 }).toBuffer())
+        );
+        const answer = await askImages(cleanText, small, { apiKey: env.OPENAI_API_KEY });
+        answers.push(`PHOTO ANSWER: ${answer}`);
+        log.log("OpenAI answered (from the photos):", String(answer).replace(/\s+/g, " ").slice(0, 300));
+        const out = normalizeFields(answer);
+        if (!isEmptyFacts(out.fields)) {
+          fields = out.fields;
+          fieldNotes = [...out.notes, "The details were read from the photos, so check them carefully."];
+        }
+      } catch (e) {
+        notes.push(`Reading the photos failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      }
+    }
+
+    if (isEmptyFacts(fields)) {
+      notes.push(`OpenAI found no property details. The text Becky read began: "${snippet(captured.text)}". The details may be on a picture, or Becky may have read the wrong part of the page.`);
+    } else {
+      notes.push(...fieldNotes);
+    }
+
+    saveDebugFile(job.id, { url, where: captured.where, text: captured.text, answers, notes });
 
     const result = await draft({ supabase, fields, cobrokeAgent, photos: captured.photos, log });
     if (captured.photos.length > 0 && result.photos < captured.photos.length) {
