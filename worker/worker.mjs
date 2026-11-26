@@ -1,5 +1,7 @@
 import { pollDelayMs } from "./polling.mjs";
 import "dotenv/config";
+import "./nameSetup.mjs";
+import { canRun, pickWorkerRow } from "./identity.mjs";
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -85,12 +87,15 @@ const supabase =
     }
   );
 
+// Woody (the default) posts; Becky (--name Becky) reads listing intake links. See identity.mjs.
 const WORKER_NAME =
-  "MIB Desktop";
+  process.env.MIB_WORKER_NAME;
 
 let workerId = null;
 
 let currentJobId = null;
+
+let skipClaimsUntil = 0;
 
 let heartbeatTimer = null;
 
@@ -173,35 +178,45 @@ async function registerWorker() {
     userId
   );
 
-  const {
-    data,
-    error,
-  } =
+  // One row per worker name. Woody takes over the old "MIB Desktop" row, so his earlier jobs still belong to him.
+  const { data: existing, error: readError } =
     await supabase
-      .from(
-        "desktop_workers"
-      )
-      .upsert(
-        {
-          user_id:
-            userId,
+      .from("desktop_workers")
+      .select("id, worker_name")
+      .eq("user_id", userId);
 
-          worker_name:
-            WORKER_NAME,
+  if (readError) {
+    throw readError;
+  }
 
-          status:
-            "online",
+  const row = pickWorkerRow(existing, WORKER_NAME);
+  const nowIso = new Date().toISOString();
+  let data = null;
+  let error = null;
 
-          last_seen:
-            new Date().toISOString(),
-        },
-        {
-          onConflict:
-            "user_id",
-        }
-      )
-      .select("id")
-      .single();
+  if (row) {
+    ({ data, error } =
+      await supabase
+        .from("desktop_workers")
+        .update({ worker_name: WORKER_NAME, status: "online", last_seen: nowIso })
+        .eq("id", row.id)
+        .select("id")
+        .single());
+  } else {
+    ({ data, error } =
+      await supabase
+        .from("desktop_workers")
+        .insert({ user_id: userId, worker_name: WORKER_NAME, status: "online", last_seen: nowIso })
+        .select("id")
+        .single());
+
+    if (error?.code === "23505") {
+      throw new Error(
+        `Could not register ${WORKER_NAME}: the database still allows only one worker per user. ` +
+          "Run supabase/audit/12_named_workers.sql in Supabase, then start this worker again."
+      );
+    }
+  }
 
   if (error) {
     throw error;
@@ -217,7 +232,7 @@ async function registerWorker() {
     data.id;
 
   console.log(
-    "Registered worker:",
+    `Registered worker ${WORKER_NAME}:`,
     workerId
   );
 }
@@ -591,6 +606,10 @@ async function checkForJobs() {
     return;
   }
 
+  if (Date.now() < skipClaimsUntil) {
+    return;
+  }
+
   // No valid session -> no job is claimed or run.
   try {
     await ensureFreshSession();
@@ -632,6 +651,22 @@ async function checkForJobs() {
 
   const job =
     data[0];
+
+  // Safety net: this worker only runs its own kind of job. A job of another kind
+  // is put back in the queue untouched (and not looked at again for a minute).
+  if (!canRun(WORKER_NAME, job.job_type)) {
+    console.log(
+      `${WORKER_NAME} does not run "${job.job_type}" jobs. Putting job ${job.id} back in the queue.`
+    );
+
+    await supabase
+      .from("desktop_jobs")
+      .update({ status: "queued" })
+      .eq("id", job.id);
+
+    skipClaimsUntil = Date.now() + 60000;
+    return;
+  }
 
   lastActivityAt = Date.now();
 
