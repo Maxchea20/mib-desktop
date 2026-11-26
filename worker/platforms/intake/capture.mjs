@@ -25,6 +25,7 @@ const MAX_PHOTOS = 12;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const ARTICLE = '[role="article"]';
+const MAIN = '[role="main"]';
 const SEE_MORE = /^(see more|lihat lagi|查看更多|展开|展開)$/i;
 
 async function loginWallShowing(page) {
@@ -32,11 +33,9 @@ async function loginWallShowing(page) {
   return (await page.locator('input[name="pass"]').count()) > 0 && (await page.locator(ARTICLE).count()) === 0;
 }
 
-/** The text of the main post: the first article on a permalink page, "See more" opened. */
-async function readPostText(page) {
-  const article = page.locator(ARTICLE).first();
-  if ((await article.count()) === 0) return "";
-  for (const button of await article.getByRole("button").all()) {
+/** Open every "See more" button inside a region. */
+async function openSeeMore(region) {
+  for (const button of await region.getByRole("button").all()) {
     try {
       const label = ((await button.innerText({ timeout: 500 })) ?? "").trim();
       if (SEE_MORE.test(label)) await button.click({ timeout: 1500 });
@@ -44,22 +43,57 @@ async function readPostText(page) {
       /* a button that cannot be clicked is not the one we want */
     }
   }
-  await sleep(800);
-  return ((await article.innerText({ timeout: 5000 })) ?? "").trim();
 }
 
-/** Photo addresses visible in the post (big ones, from Facebook's image servers). */
+/**
+ * The text of the main post. First the first "article" on the page (a normal post page). If the page has none,
+ * the page's main region (some post pages are drawn without one). Never the whole page: that would pull in
+ * menus and other people's posts.
+ */
+async function readPostText(page) {
+  for (const selector of [ARTICLE, MAIN]) {
+    const region = page.locator(selector).first();
+    if ((await region.count()) === 0) continue;
+    await openSeeMore(region);
+    await sleep(800);
+    const text = ((await region.innerText({ timeout: 5000 }).catch(() => "")) ?? "").trim();
+    if (text.length >= 20) return { text, from: selector };
+  }
+  return { text: "", from: "" };
+}
+
+/** Photo addresses visible in the post (big ones, from Facebook's image servers): in the article, else in the main region. */
 async function visiblePhotos(page) {
-  const found = await page
-    .locator(`${ARTICLE} img`)
-    .evaluateAll((imgs) => imgs.map((i) => ({ src: i.currentSrc || i.src, w: i.naturalWidth, h: i.naturalHeight })))
-    .catch(() => []);
-  return found.filter((p) => isPostPhoto(p.src, p.w, p.h));
+  for (const selector of [ARTICLE, MAIN]) {
+    const found = await page
+      .locator(`${selector} img`)
+      .evaluateAll((imgs) => imgs.map((i) => ({ src: i.currentSrc || i.src, w: i.naturalWidth, h: i.naturalHeight })))
+      .catch(() => []);
+    const good = found.filter((p) => isPostPhoto(p.src, p.w, p.h));
+    if (good.length > 0) return good;
+  }
+  return [];
+}
+
+/** A few plain facts about the page, to understand a failure without seeing the screen. */
+async function describePage(page) {
+  try {
+    const info = await page.evaluate(() => ({
+      title: document.title,
+      articles: document.querySelectorAll('[role="article"]').length,
+      mains: document.querySelectorAll('[role="main"]').length,
+      images: document.images.length,
+      start: (document.body?.innerText ?? "").replace(/\s+/g, " ").trim().slice(0, 200),
+    }));
+    return `[page: "${info.title}", ${info.articles} article(s), ${info.mains} main, ${info.images} image(s); text starts: "${info.start}"]`;
+  } catch {
+    return "";
+  }
 }
 
 /** For a post with several photos, open the photo viewer and step through with "Next". */
 async function walkPhotoViewer(page, seen, out) {
-  const first = page.locator(`${ARTICLE} a[href*="/photo"]`).first();
+  const first = page.locator(`${ARTICLE} a[href*="/photo"], ${MAIN} a[href*="/photo"]`).first();
   if ((await first.count()) === 0) return;
   try {
     await first.click({ timeout: 4000 });
@@ -148,10 +182,12 @@ export async function captureFacebookPost(url, { profileDir, log = console }) {
       await letPageLoad(page, log);
     }
 
-    const text = await readPostText(page);
+    const { text, from } = await readPostText(page);
+    if (text) log.log(`Becky read ${text.length} characters of text from ${from}.`);
+    const where = await describePage(page);
     if (!text) {
       const shot = await saveDebug(page, log);
-      notes.push(shot ? `The post text could not be read. A screenshot of what Becky saw is saved at ${shot}.` : "The post text could not be read.");
+      notes.push(`The post text could not be read. ${where}${shot ? ` Screenshot: ${shot}` : ""}`);
     }
 
     const seen = new Set();
@@ -174,7 +210,8 @@ export async function captureFacebookPost(url, { profileDir, log = console }) {
         /* skip a photo that cannot be downloaded */
       }
     }
-    if (photos.length === 0) notes.push("No photos could be downloaded from the post.");
+    if (photos.length === 0) notes.push(`No photos could be downloaded from the post${srcs.length ? ` (${srcs.length} found, none could be downloaded)` : " (none found on the page)"}.`);
+    else log.log(`Becky downloaded ${photos.length} photo(s).`);
     return { text, photos, notes };
   } finally {
     await context.close().catch(() => {});
