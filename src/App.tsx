@@ -562,7 +562,7 @@ function App() {
           currentWorker.id
         );
       },
-      3000
+      10000 // every 10 seconds is plenty and uses far less Supabase data than every 3
     );
 
     const { data: authListener } =
