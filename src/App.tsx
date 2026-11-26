@@ -1,9 +1,20 @@
-﻿import { useEffect, useRef, useState } from "react";
+﻿﻿import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { supabase } from "./lib/supabase";
 
-// The window shows Woody (posting). Becky (listing intake) runs in the same app and shows on the CRM Worker queue page.
+// Woody (posting) drives this window and its watchdog. Becky (listing intake) runs in the same app and has her own card below.
 const WORKER_NAME = "Woody";
+const BECKY_NAME = "Becky";
+
+// Online means the worker said so AND its heartbeat is recent (it beats every 30 seconds).
+const OFFLINE_AFTER_MS = 90_000;
+
+type PanelStats = {
+  received: number;
+  completed: number;
+  failed: number;
+  current: string | null;
+};
 
 type WorkerRecord = {
   id: string;
@@ -40,6 +51,12 @@ function App() {
 
   const [jobsFailed, setJobsFailed] =
     useState(0);
+
+  const [becky, setBecky] =
+    useState<WorkerRecord | null>(null);
+
+  const [beckyStats, setBeckyStats] =
+    useState<PanelStats>({ received: 0, completed: 0, failed: 0, current: null });
 
   const [connectionStatus, setConnectionStatus] =
     useState("Connecting...");
@@ -395,6 +412,78 @@ function App() {
     }
   }
 
+  // Becky's card only reads: her row, her job counts and the job she is on. Every 15 seconds is enough.
+  async function loadBecky() {
+    try {
+      const session = await getSession();
+
+      const { data: row, error: rowError } = await supabase
+        .from("desktop_workers")
+        .select("id,user_id,worker_name,status,last_seen")
+        .eq("user_id", session.user.id)
+        .eq("worker_name", BECKY_NAME)
+        .maybeSingle();
+
+      if (rowError) {
+        throw rowError;
+      }
+
+      if (!row) {
+        setBecky(null);
+        return;
+      }
+
+      setBecky(row as WorkerRecord);
+
+      const count = (status?: string) => {
+        let q = supabase
+          .from("desktop_jobs")
+          .select("id", { count: "exact", head: true })
+          .eq("worker_id", row.id);
+
+        if (status) {
+          q = q.eq("status", status);
+        }
+
+        return q;
+      };
+
+      const [received, completed, failed, current] = await Promise.all([
+        count(),
+        count("completed"),
+        count("failed"),
+        supabase
+          .from("desktop_jobs")
+          .select("id,job_type")
+          .eq("worker_id", row.id)
+          .eq("status", "processing")
+          .order("created_at", { ascending: false })
+          .limit(1),
+      ]);
+
+      setBeckyStats({
+        received: received.count ?? 0,
+        completed: completed.count ?? 0,
+        failed: failed.count ?? 0,
+        current: current.data && current.data.length > 0 ? String(current.data[0].job_type) : null,
+      });
+    } catch (err) {
+      console.error("Becky status error:", err);
+    }
+  }
+
+  useEffect(() => {
+    if (loggedIn !== true) {
+      return;
+    }
+
+    loadBecky();
+
+    const beckyTimer = setInterval(loadBecky, 15000);
+
+    return () => clearInterval(beckyTimer);
+  }, [loggedIn]);
+
   useEffect(() => {
     if (loggedIn !== true) {
       return;
@@ -593,6 +682,9 @@ function App() {
       ? "#22c55e"
       : "#ef4444";
 
+  const beckyOnline =
+    (becky?.status === "online" && becky.last_seen !== null && Date.now() - new Date(becky.last_seen).getTime() <= OFFLINE_AFTER_MS);
+
   return (
     <main
       style={{
@@ -668,7 +760,7 @@ function App() {
               marginBottom: "8px",
             }}
           >
-            Worker Status
+            Woody · posting worker
           </div>
 
           <div
@@ -838,7 +930,7 @@ function App() {
               marginBottom: "12px",
             }}
           >
-            Current Job
+            Woody&apos;s current job
           </div>
 
           {currentJob ? (
@@ -876,6 +968,71 @@ function App() {
               Waiting for jobs...
             </div>
           )}
+        </div>
+
+        <div
+          style={{
+            marginTop: "20px",
+            background: "#0f172a",
+            borderRadius: "12px",
+            padding: "20px",
+          }}
+          data-testid="becky-card"
+        >
+          <div style={{ fontSize: "14px", color: "#94a3b8", marginBottom: "8px" }}>
+            Becky · listing intake worker
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              fontSize: "22px",
+              fontWeight: 600,
+              color: beckyOnline ? "#22c55e" : "#ef4444",
+            }}
+          >
+            <span
+              style={{
+                width: "12px",
+                height: "12px",
+                borderRadius: "50%",
+                background: beckyOnline ? "#22c55e" : "#ef4444",
+                display: "inline-block",
+                boxShadow: beckyOnline ? "0 0 10px rgba(34,197,94,0.6)" : "none",
+              }}
+            />
+            {beckyOnline ? "Online" : becky ? "Offline" : "Not registered yet"}
+          </div>
+
+          {becky && (
+            <div style={{ marginTop: "14px", fontSize: "13px", color: "#94a3b8" }}>
+              Last heartbeat:{" "}
+              <span style={{ color: "#e2e8f0" }}>
+                {becky.last_seen ? new Date(becky.last_seen).toLocaleTimeString() : "—"}
+              </span>
+            </div>
+          )}
+
+          {!becky && (
+            <div style={{ marginTop: "14px", fontSize: "13px", color: "#94a3b8" }}>
+              If she stays like this, run supabase/audit/12_named_workers.sql in Supabase and restart the app.
+            </div>
+          )}
+
+          <div style={{ marginTop: "14px", fontSize: "13px", color: "#94a3b8" }}>
+            Jobs received: <span style={{ color: "#e2e8f0" }}>{beckyStats.received}</span>
+            {" · "}completed: <span style={{ color: "#22c55e" }}>{beckyStats.completed}</span>
+            {" · "}failed: <span style={{ color: "#f87171" }}>{beckyStats.failed}</span>
+          </div>
+
+          <div style={{ marginTop: "10px", fontSize: "13px", color: "#94a3b8" }}>
+            Current job:{" "}
+            <span style={{ color: beckyStats.current ? "#60a5fa" : "#64748b" }}>
+              {beckyStats.current ?? "Waiting for jobs..."}
+            </span>
+          </div>
         </div>
 
         {error && (
